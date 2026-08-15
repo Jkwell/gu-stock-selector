@@ -1,6 +1,6 @@
 # 📈 多因子选股工具 — 开发进度
 
-> 更新日期：2026-08-14
+> 更新日期：2026-08-15
 > 技术栈：React 18 + TypeScript + Vite 5 + ECharts
 
 ## 启动方式
@@ -167,6 +167,14 @@ npm run dev        # 终端2：前端开发（http://localhost:5173）
 - [x] **研报本地保存**（`aiReports.ts`）：localStorage 存历史 50 条，可回看/删除
 - [x] **文档**：README 新增 AI 研报用法，DEPLOY 补 8000 端口放行说明
 
+### 优化 v3.1（公网部署 · GitHub Pages）
+- [x] **vite base 相对化**：`base: './'`，产物适配子路径部署（`username.github.io/repo/`）
+- [x] **PWA 子路径修复**：SW 注册改相对路径 `./sw.js` + sw.js 内部用 `self.registration.scope` 动态计算缓存路径（原绝对路径在子路径下会 404，PWA 安装失效）
+- [x] **GitHub Pages 上线**：公开仓库 `Jkwell/gu-stock-selector`，dist 推 `gh-pages` 分支，站点 **https://jkwell.github.io/gu-stock-selector/** 已可访问（首页/JS/manifest 均 200）
+- [x] **gh CLI 安装**（`gh_2.97.0_windows_amd64.zip` 解压到 `.tools/`，免管理员）+ 浏览器设备码登录
+- [x] **git 代理配置**：`git config http.proxy http://127.0.0.1:7890`（Clash 本地代理，VPN 代理模式下 git 推送必须走它）
+- [x] 说明：公网站点数据直连可用；「🤖 AI 研报」Tab 依赖本地 FastAPI(8000)，公网站点上该 Tab 不可用（需自建后端托管）
+
 ### 优化 v2.10（数据去重修复 + 生产构建验证）
 - [x] **proxy 缓存键修复**（`proxy/index.mjs`）：clist 缓存 key 加入完整 query 串（原单键缓存导致分页请求全部返回第 1 页 → 4100 条仅 100 个唯一代码 → 前 3 条结果重复）
 - [x] **fetchStockList 去重**（`api.ts`）：按代码 Set 去重，杜绝重复候选进池
@@ -200,7 +208,7 @@ npm run dev        # 终端2：前端开发（http://localhost:5173）
 
 - [ ] **AI 研报端到端验证**：`ai-server/.env` 当前是占位 key，填入真实 `DEEPSEEK_API_KEY` 后重启 `npm run ai-server`，跑一次真实分析确认评级返回（约 1-3 分钟、30-50 次调用）
 - [ ] **push2 短期限流**：东财 clist 偶发限流（已降级新浪）；push2his 资金流历史间歇性不可用（moneyflow_5d 已降级）
-- [ ] **公网部署进行中（明天继续）**：代码已支持直连（生产构建不依赖代理），dist 已构建。已尝试 Vercel / Cloudflare（`npx` CLI 下载卡住）、考虑 gh+GitHub Pages。本机无任何部署账号凭据，需用户提供账号后浏览器登录一次即可全自动部署
+- [x] **公网部署（GitHub Pages）已完成**：`https://jkwell.github.io/gu-stock-selector/`（详见 v3.1 记录）。更新部署 = 重新 `npm run build` → 推送 `gh-pages` 分支
 - [ ] 财务数据仅取最新报告期，回测未纳入基本面因子
 - [ ] 回测未考虑涨跌停无法成交、停牌等现实约束
 - [ ] 止盈止损参数写死在引擎，可加 UI 配置（如宽松/严格档）

@@ -105,11 +105,32 @@ npm run build
 3. 得到 `https://你的项目.vercel.app`
 4. 手机访问 + 添加到主屏幕
 
-## 方案三：GitHub Pages（技术性较强）
+## 方案三：GitHub Pages（✅ 本机已验证可用）
 
-1. 建 GitHub 仓库，推送 dist/
-2. Settings → Pages → 选择分支
-3. 得到 `https://用户名.github.io/仓库名/`
+当前线上地址：**https://jkwell.github.io/gu-stock-selector/**（仓库 `Jkwell/gu-stock-selector`）
+
+### 首次部署步骤（已执行，记录备用）
+1. 安装 gh CLI（`gh_2.97.0_windows_amd64.zip` 解压到 `.tools/`，免管理员）
+2. `gh auth login --web` → 浏览器设备码授权（VPN/科学上网需开启）
+3. `git config http.proxy http://127.0.0.1:7890`（VPN 代理模式下 git 推送必须走本地代理，端口看本机 Clash 实际值）
+4. `git init -b main` + 提交源码 → `gh repo create gu-stock-selector --public --source=. --push`
+5. 构建：`npm run build`（已配 `base: './'`，产物相对路径适配子路径）
+6. 推 dist 到 `gh-pages` 分支（用临时 worktree 隔离，详见下方"更新部署"）
+7. 启用 Pages：`gh api --method POST repos/<owner>/<repo>/pages -f "source[branch]=gh-pages" -f "source[path]=/"`
+
+### 更新部署（改代码后）
+```bash
+npm run build
+git worktree add .gh-pages-tmp gh-pages   # 检出 gh-pages 分支到临时目录
+rm -rf .gh-pages-tmp/* && cp -r dist/. .gh-pages-tmp/
+cd .gh-pages-tmp && git add -A && git commit -m "deploy: <描述>" && git push origin gh-pages
+cd .. && git worktree remove --force .gh-pages-tmp   # 删不掉就手动删残留目录
+```
+
+### 注意事项
+- GitHub Pages 免费版要求仓库**公开**（私有仓库 Pages 收费）
+- PWA 已适配子路径：SW 用相对注册 + `self.registration.scope` 动态缓存路径，手机上仍可"添加到主屏幕"
+- 「🤖 AI 研报」依赖本地 FastAPI(8000)，公网站点上该 Tab 无后端可用（需要另行托管后端才支持）
 
 ## 注意事项
 
