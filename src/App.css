@@ -534,6 +534,151 @@
   margin-bottom: 14px;
 }
 
+.analysis-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.analysis-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.analysis-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1971c2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.analysis-head h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.analysis-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analysis-badge.good {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.analysis-badge.mid {
+  background: #fff3bf;
+  color: #e8590c;
+}
+
+.analysis-badge.bad {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-box {
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.analysis-box strong {
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.analysis-sub {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.analysis-zone {
+  position: relative;
+  height: 12px;
+  margin: 12px 2px 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e7f5ff 0%, #d3f9d8 48%, #fff3bf 72%, #ffe3e3 100%);
+  overflow: hidden;
+}
+
+.analysis-zone-track,
+.analysis-zone-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.analysis-zone-fill {
+  background: linear-gradient(90deg, rgba(25, 113, 194, 0.08), rgba(25, 113, 194, 0.02));
+}
+
+.analysis-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.analysis-marker.support {
+  background: #2b8a3e;
+}
+
+.analysis-marker.price {
+  background: #1971c2;
+}
+
+.analysis-marker.target {
+  background: #c92a2a;
+}
+
+.analysis-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.analysis-tag {
+  font-size: 11px;
+  background: #f1f3f5;
+  color: #495057;
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+
+.analysis-tag.bad {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
 .total-score-big {
   display: flex;
   align-items: baseline;
