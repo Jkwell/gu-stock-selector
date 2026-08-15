@@ -1,0 +1,24 @@
+{
+  "name": "多因子选股工具",
+  "short_name": "选股工具",
+  "description": "短线选股：情绪择时 + 多因子打分 + 买卖点 + 盯盘监控",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#1971c2",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
