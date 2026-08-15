@@ -19,7 +19,7 @@
       // PWA Service Worker 注册（仅生产构建）
       if ('serviceWorker' in navigator && 'production' === 'production') {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {})
+          navigator.serviceWorker.register('./sw.js').catch(() => {})
         })
       }
     </script>
