@@ -154,6 +154,8 @@ export const DEFAULT_CONFIG: SelectConfig = {
   maxPerIndustry: 3,
   sector: 'all',
   requireUptrend: true,
+  marketGate: true,
+  minRiskReward: 1.5,
 }
 
 /** 策略模板：预设因子权重组合 */

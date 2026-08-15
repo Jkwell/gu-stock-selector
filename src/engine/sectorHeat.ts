@@ -9,7 +9,9 @@ export interface SectorHeat {
   sector: string
   avgChangePct: number // 板块平均涨幅
   limitUpCount: number // 板块内涨停家数
+  limitUpRatio: number // 涨停家数占有效股票数比例（0-1）
   upRatio: number // 板块上涨家数占比（0-1）
+  heatScore: number // 规模归一化后的综合热度（0-100）
   stockCount: number
   leaders: string[] // 板块内领涨股名称（Top 3）
 }
@@ -60,20 +62,30 @@ function aggregateHeat(
       .sort((a, b) => b.chg - a.chg)
       .slice(0, 3)
       .map((l) => l.name)
+    const avgChangePct = g.valid > 0 ? Number((g.sum / g.valid).toFixed(2)) : 0
+    const limitUpRatio = g.valid > 0 ? g.limitUp / g.valid : 0
+    const upRatio = g.valid > 0 ? g.upCount / g.valid : 0
+    // 固定涨停家数会偏爱大板块，这里改用比例并对小样本做轻微收缩。
+    const avgScore = Math.min(100, Math.max(0, ((avgChangePct + 3) / 6) * 100))
+    const rawHeat = avgScore * 0.4 + upRatio * 100 * 0.3 + limitUpRatio * 100 * 0.3
+    const confidence = 0.8 + 0.2 * Math.min(1, Math.sqrt(g.valid / 5))
+    const heatScore = Number((rawHeat * confidence).toFixed(1))
     return {
       sector,
-      avgChangePct: g.valid > 0 ? Number((g.sum / g.valid).toFixed(2)) : 0,
+      avgChangePct,
       limitUpCount: g.limitUp,
-      upRatio: g.total > 0 ? Number((g.upCount / g.total).toFixed(2)) : 0,
+      limitUpRatio: Number(limitUpRatio.toFixed(3)),
+      upRatio: Number(upRatio.toFixed(3)),
+      heatScore,
       stockCount: g.total,
       leaders,
     }
   })
 
   results.sort((a, b) => {
-    if (b.limitUpCount !== a.limitUpCount) return b.limitUpCount - a.limitUpCount
-    if (b.avgChangePct !== a.avgChangePct) return b.avgChangePct - a.avgChangePct
-    return b.upRatio - a.upRatio
+    if (b.heatScore !== a.heatScore) return b.heatScore - a.heatScore
+    if (b.limitUpRatio !== a.limitUpRatio) return b.limitUpRatio - a.limitUpRatio
+    return b.avgChangePct - a.avgChangePct
   })
 
   return results.slice(0, topN)

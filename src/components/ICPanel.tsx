@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
-import type { SelectConfig } from '../types'
+import type { FactorDef, SelectConfig } from '../types'
 import { loadKlineStocks } from '../data/pipeline'
-import { computeFactorICs, type FactorIC } from '../engine/icAnalysis'
+import { computeFactorICs, computeFactorCorrelation, type FactorIC } from '../engine/icAnalysis'
+import { optimizeWeightsFromIC, type WeightSuggestion } from '../engine/weightOptimizer'
 import { useECharts } from './charts/useECharts'
 import type * as echarts from 'echarts'
 
 interface Props {
   config: SelectConfig
+  onApplyWeights: (factors: FactorDef[]) => void
 }
 
 const POOL_LABELS: Record<string, string> = {
@@ -15,7 +17,7 @@ const POOL_LABELS: Record<string, string> = {
   zz500: '中证500',
 }
 
-export default function ICPanel({ config }: Props) {
+export default function ICPanel({ config, onApplyWeights }: Props) {
   const [count, setCount] = useState(80)
   const [forwardDays, setForwardDays] = useState(5)
   const [running, setRunning] = useState(false)
@@ -88,13 +90,32 @@ export default function ICPanel({ config }: Props) {
 
       {error && <div className="error-banner">⚠️ {error}</div>}
 
-      {factors && <ICResults factors={factors} forwardDays={forwardDays} />}
+      {factors && (
+        <ICResults
+          factors={factors}
+          forwardDays={forwardDays}
+          factorDefs={config.factors}
+          onApplyWeights={onApplyWeights}
+        />
+      )}
     </div>
   )
 }
 
-/** 因子 IC 结果展示：柱状图 + 累计 IC 曲线 + 统计表 */
-function ICResults({ factors, forwardDays }: { factors: FactorIC[]; forwardDays: number }) {
+/** 因子 IC 结果展示：柱状图 + 累计 IC 曲线 + 统计表 + 权重优化建议 */
+function ICResults({
+  factors,
+  forwardDays,
+  factorDefs,
+  onApplyWeights,
+}: {
+  factors: FactorIC[]
+  forwardDays: number
+  factorDefs: FactorDef[]
+  onApplyWeights: (factors: FactorDef[]) => void
+}) {
+  const [suggestion, setSuggestion] = useState<{ suggestions: WeightSuggestion[]; factors: FactorDef[] } | null>(null)
+  const [applied, setApplied] = useState(false)
   const sorted = useMemo(
     () => [...factors].sort((a, b) => Math.abs(b.meanIC) - Math.abs(a.meanIC)),
     [factors],
@@ -163,6 +184,13 @@ function ICResults({ factors, forwardDays }: { factors: FactorIC[]; forwardDays:
   }, [top4])
   const cumRef = useECharts(cumLineOption, [cumLineOption])
 
+  const generateSuggestion = () => {
+    const corr = computeFactorCorrelation(factors)
+    const result = optimizeWeightsFromIC(factors, factorDefs, corr)
+    setSuggestion(result)
+    setApplied(false)
+  }
+
   return (
     <>
       <section className="card">
@@ -217,6 +245,103 @@ function ICResults({ factors, forwardDays }: { factors: FactorIC[]; forwardDays:
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="card">
+        <h3>🧬 IC 驱动权重优化</h3>
+        <p className="muted" style={{ margin: '0 0 12px' }}>
+          基于上面 IC 分析结果自动生成因子权重：IC 越强越稳定 → 权重越高；显著负 IC /
+          不稳定的因子降权或禁用。替代人工"拍脑袋"权重。技术因子被优化，基本面/资金流因子保留原配置。
+        </p>
+        {!suggestion ? (
+          <div className="btn-row">
+            <button className="btn btn-primary" onClick={generateSuggestion}>
+              📊 基于 IC 生成权重建议
+            </button>
+          </div>
+        ) : (
+          <>
+            {applied && (
+              <div
+                style={{
+                  background: 'rgba(47, 158, 68, 0.12)',
+                  border: '1px solid rgba(47, 158, 68, 0.4)',
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                  margin: '0 0 12px',
+                  fontSize: 13,
+                }}
+              >
+                ✅ 权重已应用，可切到「选股 / 今日推荐」页查看效果。
+              </div>
+            )}
+            <div className="table-wrap" style={{ maxHeight: 'none' }}>
+              <table className="result-table">
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>因子</th>
+                    <th>平均 IC</th>
+                    <th>当前权重</th>
+                    <th>建议权重</th>
+                    <th>变化</th>
+                    <th style={{ textAlign: 'left' }}>理由</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suggestion.suggestions.map((s) => {
+                    const delta = s.suggestedWeight - s.currentWeight
+                    return (
+                      <tr key={s.key}>
+                        <td className="name" style={{ textAlign: 'left' }}>{s.name}</td>
+                        <td>
+                          {s.meanIC === null ? '—' : (
+                            <span className={s.meanIC > 0 ? 'up' : 'down'}>
+                              {s.meanIC.toFixed(3)}
+                            </span>
+                          )}
+                        </td>
+                        <td>{(s.currentWeight * 100).toFixed(0)}%</td>
+                        <td>
+                          {s.disabled ? (
+                            <span className="down">禁用</span>
+                          ) : (
+                            (s.suggestedWeight * 100).toFixed(0) + '%'
+                          )}
+                        </td>
+                        <td className={delta > 0.001 ? 'up' : delta < -0.001 ? 'down' : ''}>
+                          {s.disabled
+                            ? '→ 禁用'
+                            : delta > 0.001
+                              ? `↑ +${(delta * 100).toFixed(0)}%`
+                              : delta < -0.001
+                                ? `↓ ${(delta * 100).toFixed(0)}%`
+                                : '→ 持平'}
+                        </td>
+                        <td className="muted" style={{ textAlign: 'left', fontSize: 12 }}>
+                          {s.note}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button
+                className="btn btn-strong"
+                onClick={() => {
+                  onApplyWeights(suggestion.factors)
+                  setApplied(true)
+                }}
+              >
+                ✅ 应用这些权重
+              </button>
+              <button className="btn" onClick={() => setSuggestion(null)}>
+                取消
+              </button>
+            </div>
+          </>
+        )}
       </section>
     </>
   )

@@ -20,6 +20,7 @@ export default function BacktestPanel({ config }: Props) {
   const [count, setCount] = useState(100)
   const [topN, setTopN] = useState(10)
   const [rebalanceDays, setRebalanceDays] = useState(20)
+  const [costRatePct, setCostRatePct] = useState(0.15) // 交易成本 %（买卖双向）
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState('')
   const [result, setResult] = useState<BacktestResult | null>(null)
@@ -34,7 +35,8 @@ export default function BacktestPanel({ config }: Props) {
     setResult(null)
     try {
       const stocks = await loadKlineStocks(
-        { ...config, candidateCount: count },
+        // 回测不使用当前涨幅/换手率截断候选，避免把今天的信息泄漏到历史。
+        { ...config, candidatePool: 'liquid', candidateCount: count },
         { onProgress: (d, t) => setProgress(`拉取K线 ${d}/${t}…`) },
       )
       if (stocks.length < 20) throw new Error('有效股票不足 20 只')
@@ -48,6 +50,7 @@ export default function BacktestPanel({ config }: Props) {
           topN,
           rebalanceDays,
           factors: applyTemplate(t, config).factors,
+          costRate: costRatePct / 100,
         }
         results.push({ name: t.name, desc: t.desc, result: runBacktest(stocks, btConfig) })
       }
@@ -67,7 +70,8 @@ export default function BacktestPanel({ config }: Props) {
     const btFactors = factorConfig ?? config
     try {
       const stocks = await loadKlineStocks(
-        { ...btFactors, candidateCount: count },
+        // 回测统一使用流通市值排序的候选池，策略因子负责历史截面排序。
+        { ...btFactors, candidatePool: 'liquid', candidateCount: count },
         { onProgress: (d, t) => setProgress(`拉取K线 ${d}/${t}…`) },
       )
       if (stocks.length < 20) throw new Error('有效股票不足 20 只')
@@ -78,6 +82,7 @@ export default function BacktestPanel({ config }: Props) {
         topN,
         rebalanceDays,
         factors: btFactors.factors,
+        costRate: costRatePct / 100,
       }
       const r = runBacktest(stocks, btConfig)
       setResult(r)
@@ -92,9 +97,23 @@ export default function BacktestPanel({ config }: Props) {
   return (
     <div className="config-panel">
       <section className="card">
-        <h3>📊 策略回测（技术因子）</h3>
+        <h3>📊 策略回测（仅技术因子）</h3>
+        <div
+          style={{
+            background: 'rgba(255, 193, 7, 0.12)',
+            border: '1px solid rgba(255, 193, 7, 0.4)',
+            borderRadius: 8,
+            padding: '8px 12px',
+            margin: '0 0 12px',
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          ⚠️ <b>回测仅使用技术面因子</b>（趋势/动量/MACD/量能等），不包含基本面（估值/盈利/成长）
+          和资金流因子。实盘选股使用全部因子，回测结果可能偏乐观，仅供参考。
+        </div>
         <p className="muted" style={{ margin: '0 0 12px' }}>
-          按当前因子配置，在历史区间模拟"定期打分 → Top N 等权持有 → 滚动调仓"。使用当前 K 线数据范围（约 160 个交易日），回测起点由数据起始决定。
+          按当前因子配置，在历史区间模拟"定期打分 → Top N 等权持有 → 滚动调仓"。使用当前候选股票池的 K 线数据，尚未还原历史成分股变更。
         </p>
         <div className="filter-grid">
           <label className="field">
@@ -121,8 +140,18 @@ export default function BacktestPanel({ config }: Props) {
               onChange={(e) => setRebalanceDays(Math.max(5, Math.min(60, Number(e.target.value) || 20)))}
             />
           </label>
+          <label className="field">
+            <span className="field-label">交易成本 %（买卖双向）</span>
+            <input
+              type="number" min={0} max={1} step={0.05}
+              value={costRatePct}
+              onChange={(e) =>
+                setCostRatePct(Math.max(0, Math.min(1, Number(e.target.value) || 0.15)))
+              }
+            />
+          </label>
           <div className="field checkbox-field">
-            <span className="field-label">股票池：{POOL_LABELS[config.pool]}</span>
+            <span className="field-label">股票池：{POOL_LABELS[config.pool]} · 回测候选按流通市值</span>
           </div>
         </div>
         <div className="btn-row" style={{ gap: 10 }}>
@@ -168,7 +197,7 @@ function CompareResults({
     <section className="card">
       <h3>🔍 多策略对比（按累计收益排序）</h3>
       <p className="muted" style={{ margin: '0 0 12px' }}>
-        所有策略用相同股票池/周期回测，横向对比哪个历史表现最强。收益高≠适合你，还要看回撤和胜率。
+        所有策略用相同当前股票池/周期回测，横向比较相对表现；当前结果仍受短样本和历史成分股缺失影响。收益高≠适合你，还要看回撤和胜率。
       </p>
       <div className="table-wrap" style={{ maxHeight: 'none' }}>
         <table className="result-table">
@@ -176,8 +205,10 @@ function CompareResults({
             <tr>
               <th style={{ textAlign: 'left' }}>排名</th>
               <th style={{ textAlign: 'left' }}>策略</th>
+              <th style={{ textAlign: 'left' }}>回测因子</th>
               <th>累计收益</th>
               <th>年化</th>
+              <th>后半段</th>
               <th>夏普</th>
               <th>最大回撤</th>
               <th>胜率</th>
@@ -190,11 +221,18 @@ function CompareResults({
                 <td className="name" style={{ textAlign: 'left' }} title={r.desc}>
                   {r.name}
                 </td>
+                <td style={{ textAlign: 'left', fontSize: 12 }} title={r.result.omittedFactorKeys.join(', ')}>
+                  {r.result.usedFactorKeys.length > 0 ? r.result.usedFactorKeys.join('、') : '无可用因子'}
+                  {r.result.omittedFactorKeys.length > 0 ? '（已忽略非技术因子）' : ''}
+                </td>
                 <td className={r.result.totalReturn >= 0 ? 'up' : 'down'}>
                   {r.result.totalReturn.toFixed(1)}%
                 </td>
                 <td className={r.result.annualReturn >= 0 ? 'up' : 'down'}>
                   {r.result.annualReturn.toFixed(1)}%
+                </td>
+                <td className={r.result.secondHalfReturn >= 0 ? 'up' : 'down'}>
+                  {r.result.secondHalfReturn.toFixed(1)}%
                 </td>
                 <td className={r.result.sharpe >= 1 ? 'up' : ''}>
                   {r.result.sharpe.toFixed(2)}
@@ -269,6 +307,45 @@ function BacktestResults({ result }: { result: BacktestResult }) {
           {metric('最大回撤', `${result.maxDrawdown.toFixed(1)}%`, 'down')}
           {metric('调仓胜率', `${result.winRate.toFixed(0)}%`)}
         </div>
+      <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+          已扣除交易成本 {result.costRate * 100}% / 次（买卖双向）
+          {result.excludedCount > 0 && `；因涨停买不进跳过 ${result.excludedCount} 只`}
+        </p>
+        {result.omittedFactorKeys.length > 0 && (
+          <div
+            style={{
+              background: 'rgba(255, 193, 7, 0.12)',
+              border: '1px solid rgba(255, 193, 7, 0.4)',
+              borderRadius: 8,
+              padding: '8px 12px',
+              margin: '8px 0 0',
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            注意：本次历史回测实际只使用技术因子（{result.usedFactorKeys.join('、') || '无'}）；
+            已忽略 {result.omittedFactorKeys.join('、')}。基本面和资金面没有按历史日期还原，不能据此比较完整策略。
+          </div>
+        )}
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
+          稳定性拆分：前半段 {result.firstHalfReturn.toFixed(1)}%，后半段 {result.secondHalfReturn.toFixed(1)}%，
+          后半段超额 {result.secondHalfExcessReturn.toFixed(1)}%。后半段仅用于检验表现是否延续，不代表真正样本外结果。
+        </p>
+        {result.sampleDays < 252 && (
+          <div
+            style={{
+              background: 'rgba(255, 193, 7, 0.12)',
+              border: '1px solid rgba(255, 193, 7, 0.4)',
+              borderRadius: 8,
+              padding: '8px 12px',
+              margin: '8px 0 0',
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            ⚠️ 当前只有 {result.sampleDays} 个交易日，少于约 1 年样本；同时使用当前股票池，结果不适合直接证明策略有效。
+          </div>
+        )}
         <div ref={eqRef} style={{ width: '100%', height: 320 }} />
       </section>
 

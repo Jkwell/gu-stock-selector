@@ -74,14 +74,29 @@ const server = http.createServer(async (req, res) => {
     if (path === '/financials') {
       // 构造东方财富 datacenter 财务接口
       const code = url.searchParams.get('code') ?? ''
+      const asOfDate = url.searchParams.get('asOfDate') ?? ''
+      const parsedAsOf = asOfDate ? new Date(`${asOfDate}T00:00:00Z`) : null
+      const validAsOf = !asOfDate || (
+        /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) &&
+        !Number.isNaN(parsedAsOf?.getTime()) &&
+        parsedAsOf?.toISOString().slice(0, 10) === asOfDate
+      )
+      if (!/^\d{6}$/.test(code) || !validAsOf) {
+        res.writeHead(400, { ...corsHeaders(), 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ code: 400, msg: 'invalid financials query' }))
+        return
+      }
+      const filter = asOfDate
+        ? `(SECURITY_CODE="${code}")(NOTICE_DATE<='${asOfDate}')`
+        : `(SECURITY_CODE="${code}")`
       const params = new URLSearchParams({
         reportName: 'RPT_LICO_FN_CPD',
         columns: 'ALL',
-        filter: `(SECURITY_CODE="${code}")`,
+        filter,
         pageNumber: '1',
         pageSize: '1',
         sortTypes: '-1',
-        sortColumns: 'REPORTDATE',
+        sortColumns: asOfDate ? 'NOTICE_DATE' : 'REPORTDATE',
       })
       upstream = `${target}?${params.toString()}`
     } else if (path === '/kline') {

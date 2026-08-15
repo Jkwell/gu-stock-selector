@@ -9,9 +9,14 @@ import type {
 } from '../types'
 import { scoreStocks, type ScoringInput } from '../engine/factors'
 import { diversifyPortfolio } from '../engine/portfolio'
-import { computeTradingSignal, isOneWordLimitUp } from '../engine/tradingSignals'
+import {
+  computeTradingSignal,
+  DEFAULT_MIN_RISK_REWARD,
+  isOneWordLimitUp,
+} from '../engine/tradingSignals'
 import { pickConceptLeaders } from '../engine/conceptLeader'
 import { filterByQuickRules, filterByVolumeRatio, isUptrend } from '../engine/quickRules'
+import { computeMarketSentiment, type MarketSentiment } from '../engine/marketSentiment'
 import type { FactorDef } from '../types'
 import {
   fetchFinancials,
@@ -78,6 +83,54 @@ export interface KlineStock {
   kline: Kline[]
 }
 
+export type CandidateConfig = Pick<SelectConfig, 'candidatePool' | 'candidateCount'>
+
+/**
+ * 构造候选池：实盘选股以配置排序为主，同时从其他排序补充样本，
+ * 避免单一的今日涨幅/换手/市值排序把潜在标的提前截掉。
+ */
+export function selectCandidatePool(
+  stocks: StockInfo[],
+  config: CandidateConfig,
+  mixSources: boolean,
+): StockInfo[] {
+  const byMomentum = (a: StockInfo, b: StockInfo) =>
+    (b.changePct ?? -999) - (a.changePct ?? -999)
+  const byLiquid = (a: StockInfo, b: StockInfo) =>
+    (b.floatMv ?? 0) - (a.floatMv ?? 0)
+  const byTurnover = (a: StockInfo, b: StockInfo) =>
+    (b.turnoverRate ?? 0) - (a.turnoverRate ?? 0)
+  const byMcap = (a: StockInfo, b: StockInfo) =>
+    (b.totalMv ?? 0) - (a.totalMv ?? 0)
+  const sorters = { momentum: byMomentum, liquid: byLiquid, turnover: byTurnover, marketcap: byMcap }
+  const primary = sorters[config.candidatePool]
+  const selected: StockInfo[] = []
+  const seen = new Set<string>()
+  const add = (items: StockInfo[], limit: number) => {
+    const target = Math.min(config.candidateCount, selected.length + limit)
+    for (const s of items) {
+      if (selected.length >= target) break
+      if (seen.has(s.code)) continue
+      seen.add(s.code)
+      selected.push(s)
+    }
+  }
+
+  const sortedBy = (sort: (a: StockInfo, b: StockInfo) => number) => [...stocks].sort(sort)
+  const primarySorted = sortedBy(primary)
+  if (!mixSources) {
+    return primarySorted.slice(0, config.candidateCount)
+  }
+
+  const primaryQuota = Math.max(1, Math.floor(config.candidateCount * 0.7))
+  add(primarySorted, primaryQuota)
+  const alternates = Object.values(sorters).filter((sort) => sort !== primary)
+  const alternateQuota = Math.max(1, Math.floor(config.candidateCount * 0.1))
+  for (const sort of alternates) add(sortedBy(sort), alternateQuota)
+  add(primarySorted, config.candidateCount)
+  return selected.slice(0, config.candidateCount)
+}
+
 /**
  * 加载候选股票池的 K 线（供 IC 分析、回测等使用）
  * @param config 需要 pool/candidatePool/candidateCount/过滤字段
@@ -100,33 +153,9 @@ export async function loadKlineStocks(
   const concurrency = opts.concurrency ?? 8
   let all = await getStockList(config.pool)
 
-  const minMv = config.minMvYiyi * 1e8
-  all = all.filter((s) => {
-    if (config.excludeST && /ST|退/.test(s.name)) return false
-    if (config.excludeKcb && s.code.startsWith('688')) return false
-    if (config.excludeCyb && /^(300|301)/.test(s.code)) return false
-    if (config.sector && config.sector !== 'all' && s.industry !== config.sector) return false
-    if (minMv > 0 && (s.totalMv ?? 0) < minMv) return false
-    return true
-  })
+  all = filterBySelectionConfig(all, config)
 
-  const byMomentum = (a: StockInfo, b: StockInfo) =>
-    (b.changePct ?? -999) - (a.changePct ?? -999)
-  const byLiquid = (a: StockInfo, b: StockInfo) =>
-    (b.floatMv ?? 0) - (a.floatMv ?? 0)
-  const byTurnover = (a: StockInfo, b: StockInfo) =>
-    (b.turnoverRate ?? 0) - (a.turnoverRate ?? 0)
-  const byMcap = (a: StockInfo, b: StockInfo) =>
-    (b.totalMv ?? 0) - (a.totalMv ?? 0)
-  const sortFn =
-    config.candidatePool === 'momentum'
-      ? byMomentum
-      : config.candidatePool === 'turnover'
-        ? byTurnover
-        : config.candidatePool === 'liquid'
-          ? byLiquid
-          : byMcap
-  const candidates = all.sort(sortFn).slice(0, config.candidateCount)
+  const candidates = selectCandidatePool(all, config, false)
 
   const out: KlineStock[] = []
   let done = 0
@@ -168,28 +197,30 @@ async function mapLimit<T, R>(
 }
 
 async function getStockList(pool: SelectConfig['pool']): Promise<StockInfo[]> {
-  // 优先读缓存（12小时内）
-  const cached = await stockListCache.get()
+  // 优先读缓存（盘中 5 分钟内）
+  const cached = await stockListCache.get(pool)
   if (cached && cached.length > 0) return dedupeByCode(cached)
   try {
     // 优先东财（有行业/概念字段）
     const list = await fetchStockList(pool)
-    await stockListCache.set(list)
+    await stockListCache.set(list, pool)
     return list
   } catch {
-    // 降级1：尝试新浪全市场快照（无行业/概念，但价格/市值/PE 齐全）
-    try {
-      console.warn('⚠ 东财 clist 不可用，降级到新浪数据源')
-      const list = await fetchStockListSina()
-      if (list.length > 0) {
-        await stockListCache.set(list)
-        return list
+    // 新浪只有全市场快照，没有沪深300/中证500成分字段，不能冒充指数池。
+    if (pool === 'all') {
+      try {
+        console.warn('⚠ 东财 clist 不可用，降级到新浪数据源')
+        const list = await fetchStockListSina()
+        if (list.length > 0) {
+          await stockListCache.set(list, pool)
+          return list
+        }
+      } catch {
+        // 新浪也失败，继续降级
       }
-    } catch {
-      // 新浪也失败，继续降级
     }
     // 降级2：尝试用过期的缓存数据
-    const stale = await stockListCache.getStale()
+    const stale = await stockListCache.getStale(pool)
     if (stale && stale.length > 0) {
       console.warn('⚠ 数据源均不可用，使用过期缓存股票列表')
       return dedupeByCode(stale)
@@ -210,9 +241,28 @@ function dedupeByCode(stocks: StockInfo[]): StockInfo[] {
   return out
 }
 
+/** 所有策略共用的基础可交易过滤，避免特殊策略绕过用户配置。 */
+export function filterBySelectionConfig(
+  stocks: StockInfo[],
+  config: Pick<
+    SelectConfig,
+    'excludeST' | 'excludeKcb' | 'excludeCyb' | 'sector' | 'minMvYiyi'
+  >,
+): StockInfo[] {
+  const minMv = config.minMvYiyi * 1e8
+  return stocks.filter((s) => {
+    if (config.excludeST && /ST|退/.test(s.name)) return false
+    if (config.excludeKcb && s.code.startsWith('688')) return false
+    if (config.excludeCyb && /^(300|301)/.test(s.code)) return false
+    if (config.sector && config.sector !== 'all' && s.industry !== config.sector) return false
+    if (minMv > 0 && (s.totalMv ?? 0) < minMv) return false
+    return true
+  })
+}
+
 /**
  * 拉取全市场快照（情绪/板块分析用，不经过选股过滤）
- * 盘中刷新频率低（缓存 12 小时），情绪分析足够
+ * 盘中短缓存（5 分钟），避免情绪和题材榜使用过时快照
  */
 export async function fetchMarketStocks(): Promise<StockInfo[]> {
   return getStockList('all')
@@ -264,34 +314,10 @@ async function loadScoringInputs(
   onProgress({ stage: 'list', done: 1, total: 1, message: `共 ${all.length} 只` })
 
   // ---- 过滤 ----
-  const minMv = config.minMvYiyi * 1e8
-  all = all.filter((s) => {
-    if (config.excludeST && /ST|退/.test(s.name)) return false
-    if (config.excludeKcb && s.code.startsWith('688')) return false
-    if (config.excludeCyb && /^(300|301)/.test(s.code)) return false
-    if (config.sector && config.sector !== 'all' && s.industry !== config.sector) return false
-    if (minMv > 0 && (s.totalMv ?? 0) < minMv) return false
-    return true
-  })
+  all = filterBySelectionConfig(all, config)
 
-  // ---- 候选池排序 ----
-  const byMomentum = (a: StockInfo, b: StockInfo) =>
-    (b.changePct ?? -999) - (a.changePct ?? -999)
-  const byLiquid = (a: StockInfo, b: StockInfo) =>
-    (b.floatMv ?? 0) - (a.floatMv ?? 0)
-  const byTurnover = (a: StockInfo, b: StockInfo) =>
-    (b.turnoverRate ?? 0) - (a.turnoverRate ?? 0)
-  const byMcap = (a: StockInfo, b: StockInfo) =>
-    (b.totalMv ?? 0) - (a.totalMv ?? 0)
-  const sortFn =
-    config.candidatePool === 'momentum'
-      ? byMomentum
-      : config.candidatePool === 'turnover'
-        ? byTurnover
-        : config.candidatePool === 'liquid'
-          ? byLiquid
-          : byMcap
-  const candidates = all.sort(sortFn).slice(0, config.candidateCount)
+  // ---- 候选池排序：实盘使用多来源合并，降低单一排序截断偏差 ----
+  const candidates = selectCandidatePool(all, config, true)
 
   const skipped = all.length - candidates.length
 
@@ -451,6 +477,42 @@ export async function runDailyPick(
     diversify: true,
   }
 
+  let marketSnapshot: StockInfo[] | null = null
+  let marketState: MarketSentiment | undefined
+  let marketGateWarning: string | undefined
+  let tradeFilterWarning: string | undefined
+  const minRiskReward = Math.max(
+    0,
+    pickConfig.minRiskReward ?? DEFAULT_MIN_RISK_REWARD,
+  )
+  const now = new Date()
+  const h = now.getHours()
+  const m = now.getMinutes()
+  const isTailPeriod = (h === 14 && m >= 30) || h === 15
+
+  // 市场冰点时暂停自动推荐，避免个股评分掩盖系统性风险；数据失败则放行但明确提示。
+  if (pickConfig.marketGate !== false) {
+    onProgress({ stage: 'list', done: 0, total: 1, message: '检查市场情绪…' })
+    try {
+      marketSnapshot = await fetchMarketStocks()
+      marketState = computeMarketSentiment(marketSnapshot)
+      onProgress({ stage: 'list', done: 1, total: 1, message: `市场情绪 ${marketState.temperature}°` })
+      if (marketState.level === 'cold') {
+        onProgress({ stage: 'done', done: 1, total: 1, message: '市场处于冰点，暂停今日推荐' })
+        return {
+          picks: [],
+          computedAt: now.toISOString(),
+          isTailPeriod,
+          marketTemperature: marketState.temperature,
+          marketLevel: marketState.level,
+          gateReason: `市场情绪 ${marketState.temperature}°（冰点），今日暂停自动推荐`,
+        }
+      }
+    } catch {
+      marketGateWarning = '市场情绪数据暂时不可用，本次未执行情绪门控'
+    }
+  }
+
   // 识别当前模板类型
   const enabledKeys = new Set(config.factors.filter((f) => f.enabled).map((f) => f.key))
   const isConceptLeader =
@@ -461,15 +523,16 @@ export async function runDailyPick(
     enabledKeys.size === 5 &&
     ['volume', 'short_momentum', 'moneyflow', 'trend', 'macd'].every((k) => enabledKeys.has(k))
 
-  let top4: StockScore[]
+  let topCandidates: StockScore[]
   if (isGentleVolume) {
-    // 温和放量规则：粗筛(换手/涨跌/剔除) → 拉K线精筛量比 → Top 4
+    // 温和放量规则：基础过滤 → 量比/趋势硬筛 → 完整五因子评分 → Top 4
     onProgress({ stage: 'list', done: 0, total: 1, message: '应用量比/换手筛选…' })
-    const market = await fetchMarketStocks()
-    const quickFiltered = filterByQuickRules(market)
+    const market = marketSnapshot ?? await fetchMarketStocks()
+    const eligible = filterBySelectionConfig(market, pickConfig)
+    const quickFiltered = filterByQuickRules(eligible)
     onProgress({ stage: 'list', done: 1, total: 1, message: `快筛后 ${quickFiltered.length} 只，算量比…` })
     const requireTrend = pickConfig.requireUptrend !== false // 默认要求上升趋势
-    const qualified: StockInfo[] = []
+    const qualified: ScoringInput[] = []
     let checked = 0
     await mapLimit(quickFiltered, concurrency, async (s) => {
       let kline: Kline[] = []
@@ -480,11 +543,11 @@ export async function runDailyPick(
       }
       // 博主规则①：温和放量；规则②：上升趋势（可选开关，拒绝抄底低位）
       if (
-        kline.length >= 60 &&
+        kline.length >= 70 &&
         filterByVolumeRatio(kline) &&
         (!requireTrend || isUptrend(kline))
       ) {
-        qualified.push(s)
+        qualified.push({ info: s, kline })
       }
       checked++
       if (checked % 50 === 0 || checked === quickFiltered.length) {
@@ -496,36 +559,34 @@ export async function runDailyPick(
         })
       }
     })
-    // 量比合格后按换手率/涨幅排序取 Top 4
-    const sorted = [...qualified].sort(
-      (a, b) => (b.turnoverRate ?? 0) - (a.turnoverRate ?? 0),
-    )
-    top4 = sorted.slice(0, 4).map((s, i) => ({
-      code: s.code,
-      name: s.name,
-      market: s.market,
-      industry: s.industry,
-      concept: s.concept,
-      totalScore: 100 - i * 3,
-      price: s.price,
-      changePct: s.changePct,
-      factorScores: [
-        {
-          key: 'volume_ratio',
-          name: '温和放量',
-          group: 'technical',
-          rawValue: s.turnoverRate ?? 0,
-          score: 90,
-          weight: 1,
-          detail: `换手 ${(s.turnoverRate ?? 0).toFixed(2)}% · 涨跌幅 ${(s.changePct ?? 0).toFixed(2)}% · 满足量比/换手${requireTrend ? '/上升趋势' : ''}`,
-        },
-      ],
-    }))
+    // 资金流是模板因子之一，先补齐快筛通过者，再按真实因子分排序。
+    let moneyDone = 0
+    await mapLimit(qualified, concurrency, async (input) => {
+      let moneyFlow = await moneyflowCache.get(input.info.code)
+      if (!moneyFlow) {
+        try {
+          moneyFlow = await fetchMoneyFlow(input.info.market, input.info.code)
+        } catch {
+          moneyFlow = null
+        }
+        if (moneyFlow) await moneyflowCache.set(input.info.code, moneyFlow)
+      }
+      if (moneyFlow) input.moneyFlow = moneyFlow
+      moneyDone++
+      if (moneyDone % 25 === 0 || moneyDone === qualified.length) {
+        onProgress({ stage: 'moneyflow', done: moneyDone, total: qualified.length, message: `补充资金流 ${moneyDone}/${qualified.length}…` })
+      }
+    })
+    onProgress({ stage: 'scoring', done: 0, total: 1, message: '温和放量因子评分…' })
+    let scored = await scoreWithWorker(qualified, pickConfig.factors)
+    scored = diversifyPortfolio(scored, pickConfig.maxPerIndustry)
+    topCandidates = scored.slice(0, 12)
   } else if (isConceptLeader) {
     onProgress({ stage: 'list', done: 0, total: 1, message: '分析热点概念题材…' })
-    const market = await fetchMarketStocks()
-    const leaders = pickConceptLeaders(market, 4) // 加权排序取 Top 4（含冷门强势股）
-    top4 = leaders.slice(0, 4).map((s, i) => ({
+    const market = marketSnapshot ?? await fetchMarketStocks()
+    const eligible = filterBySelectionConfig(market, pickConfig)
+    const leaders = pickConceptLeaders(eligible, 12) // 先取候选，后续再按可成交性补足 Top 4
+    topCandidates = leaders.slice(0, 12).map((s, i) => ({
       code: s.code,
       name: s.name,
       market: s.market,
@@ -551,20 +612,22 @@ export async function runDailyPick(
     onProgress({ stage: 'scoring', done: 0, total: 1, message: '多因子打分…' })
     let scored = await scoreWithWorker(inputs, pickConfig.factors)
     scored = diversifyPortfolio(scored, pickConfig.maxPerIndustry)
-    top4 = scored.slice(0, 4)
+    topCandidates = scored.slice(0, 12)
   }
 
-  onProgress({ stage: 'done', done: 0, total: 4, message: '计算买卖点…' })
+  onProgress({ stage: 'done', done: 0, total: topCandidates.length, message: '计算买卖点…' })
 
   // 强势领涨模板 → 短线模式（MA5 回踩）
   const shortMode = pickConfig.factors.some(
     (f) => f.enabled && (f.key === 'short_momentum' || f.key === 'breakout'),
   )
 
-  // 对 Top 4 强制拉最新 K 线（绕过缓存，确保最后一根是尾盘实时价）
+  // 对候选强制拉最新 K 线（绕过缓存，确保最后一根是尾盘实时价）
   const picks: DailyPick[] = []
-  for (let i = 0; i < top4.length; i++) {
-    const s = top4[i]
+  let rejectedOneWord = 0
+  let rejectedRiskReward = 0
+  for (let i = 0; i < topCandidates.length; i++) {
+    const s = topCandidates[i]
     let kline: Kline[] = []
     try {
       kline = await fetchKline(s.market, s.code, 160)
@@ -583,43 +646,52 @@ export async function runDailyPick(
         // 一字板判断（买不进）
         const isWide = s.code.startsWith('30') || s.code.startsWith('688')
         const oneWord = isOneWordLimitUp(kline, isWide ? 0.2 : 0.1)
-        picks.push({
-          code: s.code,
-          name: s.name,
-          industry: s.industry,
-          concept: s.concept,
-          market: s.market,
-          totalScore: s.totalScore,
-          factorScores: s.factorScores,
-          price: signal.currentPrice,
-          changePct: changePct !== undefined ? Number(changePct.toFixed(2)) : undefined,
-          buyLow: signal.buyLow,
-          buyHigh: signal.buyHigh,
-          takeProfit: signal.takeProfit,
-          stopLoss: signal.stopLoss,
-          riskReward: signal.riskReward,
-          reasons: signal.reasons,
-          oneWord,
-          highRisk: s.highRisk,
-        })
+        if (oneWord) {
+          rejectedOneWord++
+        } else if (signal.riskReward < minRiskReward) {
+          rejectedRiskReward++
+        } else if (picks.length < 4) {
+          picks.push({
+            code: s.code,
+            name: s.name,
+            industry: s.industry,
+            concept: s.concept,
+            market: s.market,
+            totalScore: s.totalScore,
+            factorScores: s.factorScores,
+            price: signal.currentPrice,
+            changePct: changePct !== undefined ? Number(changePct.toFixed(2)) : undefined,
+            buyLow: signal.buyLow,
+            buyHigh: signal.buyHigh,
+            takeProfit: signal.takeProfit,
+            stopLoss: signal.stopLoss,
+            riskReward: signal.riskReward,
+            reasons: signal.reasons,
+            oneWord,
+            highRisk: s.highRisk,
+          })
+        }
       }
     }
     onProgress({
       stage: 'done',
       done: i + 1,
-      total: top4.length,
-      message: `计算买卖点 ${i + 1}/${top4.length}…`,
+      total: topCandidates.length,
+      message: `计算买卖点 ${i + 1}/${topCandidates.length}…`,
     })
   }
 
-  const now = new Date()
-  const h = now.getHours()
-  const m = now.getMinutes()
-  const isTailPeriod = (h === 14 && m >= 30) || h === 15 // 14:30-15:00
+  const filterNotes: string[] = []
+  if (rejectedOneWord > 0) filterNotes.push(`剔除一字板 ${rejectedOneWord} 只`)
+  if (rejectedRiskReward > 0) filterNotes.push(`剔除风险回报比低于 ${minRiskReward.toFixed(1)} 的 ${rejectedRiskReward} 只`)
+  tradeFilterWarning = filterNotes.length > 0 ? filterNotes.join('，') : undefined
 
   return {
     picks,
     computedAt: now.toISOString(),
     isTailPeriod,
+    marketTemperature: marketState?.temperature,
+    marketLevel: marketState?.level,
+    gateReason: [marketGateWarning, tradeFilterWarning].filter(Boolean).join('；') || undefined,
   }
 }

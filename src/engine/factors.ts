@@ -527,10 +527,14 @@ export function scoreStocks(
 
     // 总分：按实际可得因子的归一化权重加权
     const availSum = factorScores.reduce((s, fs) => s + fs.weight, 0)
-    const total =
+    const rawTotal =
       availSum > 0
         ? factorScores.reduce((s, fs) => s + fs.score * (fs.weight / availSum), 0)
         : 0
+    const coverage = weightSum > 0 ? availSum / weightSum : 0
+    // 缺失因子不再被完全重新归一化掩盖，覆盖率低于 80% 时按比例降分。
+    const coveragePenalty = coverage >= 0.8 ? 1 : coverage / 0.8
+    const total = rawTotal * coveragePenalty
 
     results.push({
       code: input.info.code,
@@ -540,6 +544,7 @@ export function scoreStocks(
       concept: input.info.concept,
       highRisk: highRiskFlag,
       totalScore: Number(total.toFixed(1)),
+      dataCoverage: Number(coverage.toFixed(3)),
       price: input.info.price,
       changePct: input.info.changePct,
       factorScores,

@@ -88,6 +88,29 @@ export default function ConfigPanel({ config, onChange, onStart, disabled }: Pro
               <span className="template-desc">{t.desc}</span>
             </button>
           ))}
+          <button
+            type="button"
+            className="template-btn template-btn-ic"
+            onClick={() => {
+              try {
+                const saved = localStorage.getItem('ic-optimized-factors')
+                if (saved) {
+                  const factors = JSON.parse(saved) as SelectConfig['factors']
+                  if (Array.isArray(factors) && factors.length > 0) {
+                    onChange({ ...config, factors })
+                    return
+                  }
+                }
+              } catch {
+                // 解析失败走下面的提示
+              }
+              alert('暂无 IC 优化结果。请先到「因子分析」页运行分析并点击"应用这些权重"。')
+            }}
+            title="应用因子分析页生成的 IC 优化权重（需先跑一次因子分析并应用）"
+          >
+            <span className="template-name">🧬 IC 优化权重</span>
+            <span className="template-desc">应用因子分析页按 IC 自动生成的权重（先跑因子分析）</span>
+          </button>
         </div>
       </section>
 

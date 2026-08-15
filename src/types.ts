@@ -30,6 +30,9 @@ export interface StockInfo {
 export interface Financials {
   code: string
   reportDate: string // 报告期，如 '2024-06-30'
+  disclosureDate?: string // 公告披露日；历史时点查询用它判断信息是否已可见
+  asOfDate?: string // 本次查询截止日（仅历史时点查询返回）
+  pointInTime?: boolean // 是否按披露日过滤，而不是最新报告快照
   roe?: number // 净资产收益率 %
   revenueGrowth?: number // 营收同比增速 %
   profitGrowth?: number // 净利润同比增速 %
@@ -76,6 +79,7 @@ export interface StockScore {
   concept?: string
   highRisk?: boolean // 高位风险预警
   totalScore: number // 0~100
+  dataCoverage?: number // 启用因子中实际有数据的权重占比（0~1）
   price?: number
   changePct?: number
   factorScores: FactorScore[]
@@ -100,6 +104,10 @@ export interface SelectConfig {
   sector: string
   /** 温和放量：是否要求上升趋势（MA20>MA60 + 站上MA20 + MA20拐头），默认 true */
   requireUptrend?: boolean
+  /** 今日推荐：市场情绪冰点时暂停推荐，默认 true */
+  marketGate?: boolean
+  /** 今日推荐最低风险回报比，默认 1.5 */
+  minRiskReward?: number
 }
 
 /** 打分流水线产出 */
@@ -138,6 +146,9 @@ export interface DailyPickResult {
   picks: DailyPick[]
   computedAt: string
   isTailPeriod: boolean // 是否尾盘时段（14:30-15:00）
+  marketTemperature?: number
+  marketLevel?: 'hot' | 'neutral' | 'cold'
+  gateReason?: string
 }
 
 // ─────────────── AI 研报（tradingAgents-astock 多智能体分析）───────────────

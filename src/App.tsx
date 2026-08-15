@@ -30,11 +30,14 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'backtest', label: '📊 策略回测' },
 ]
 
+const MOBILE_PRIMARY_TABS: Tab[] = ['market', 'daily', 'select', 'watch']
+
 export default function App() {
   const [config, setConfig] = useState<SelectConfig>(() =>
     JSON.parse(JSON.stringify(DEFAULT_CONFIG)),
   )
   const [tab, setTab] = useState<Tab>('daily')
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [result, setResult] = useState<SelectionResult | null>(null)
@@ -61,6 +64,16 @@ export default function App() {
     setTab('select')
   }
 
+  const switchTab = (next: Tab) => {
+    setTab(next)
+    setResult(null)
+    setMobileMoreOpen(false)
+  }
+
+  const mobilePrimaryTabs = TABS.filter((item) => MOBILE_PRIMARY_TABS.includes(item.key))
+  const mobileExtraTabs = TABS.filter((item) => !MOBILE_PRIMARY_TABS.includes(item.key))
+  const mobileMoreActive = mobileExtraTabs.some((item) => item.key === tab)
+
   return (
     <div className="app">
       <header className="app-header">
@@ -85,10 +98,7 @@ export default function App() {
           <button
             key={t.key}
             className={`tab-btn ${tab === t.key ? 'active' : ''}`}
-            onClick={() => {
-              setTab(t.key)
-              setResult(null)
-            }}
+            onClick={() => switchTab(t.key)}
           >
             {t.label}
           </button>
@@ -123,7 +133,19 @@ export default function App() {
           <ResultTable result={result} onSelect={setSelected} onBack={backToConfig} />
         ))}
 
-      {tab === 'ic' && <ICPanel config={config} />}
+      {tab === 'ic' && (
+        <ICPanel
+          config={config}
+          onApplyWeights={(factors) => {
+            setConfig((prev) => ({ ...prev, factors }))
+            try {
+              localStorage.setItem('ic-optimized-factors', JSON.stringify(factors))
+            } catch {
+              // 隐私模式等场景下 localStorage 不可用，忽略
+            }
+          }}
+        />
+      )}
       {tab === 'backtest' && <BacktestPanel config={config} />}
 
       {running && progress && (
@@ -146,6 +168,54 @@ export default function App() {
       {selected && (
         <StockDetailModal stock={selected} onClose={() => setSelected(null)} />
       )}
+
+      {mobileMoreOpen && (
+        <>
+          <button
+            type="button"
+            className="mobile-more-backdrop"
+            aria-label="关闭更多功能"
+            onClick={() => setMobileMoreOpen(false)}
+          />
+          <div id="mobile-more-menu" className="mobile-more-menu">
+            <div className="mobile-more-title">更多功能</div>
+            <div className="mobile-more-grid">
+              {mobileExtraTabs.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`mobile-more-item ${tab === item.key ? 'active' : ''}`}
+                  onClick={() => switchTab(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      <nav className="mobile-tabbar" aria-label="手机主导航">
+        {mobilePrimaryTabs.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={`mobile-tabbar-item ${tab === item.key ? 'active' : ''}`}
+            onClick={() => switchTab(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`mobile-tabbar-item ${mobileMoreActive ? 'active' : ''}`}
+          aria-expanded={mobileMoreOpen}
+          aria-controls="mobile-more-menu"
+          onClick={() => setMobileMoreOpen((open) => !open)}
+        >
+          更多
+        </button>
+      </nav>
     </div>
   )
 }

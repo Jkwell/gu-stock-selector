@@ -8,6 +8,7 @@ import { addToWatchlist, watchItemFrom } from '../data/watchlist'
 import { recordFromPicks, savePickRecord } from '../data/records'
 import StrategyGuideModal from './StrategyGuideModal'
 import type { DailyPick } from '../types'
+import { DEFAULT_MIN_RISK_REWARD } from '../engine/tradingSignals'
 
 interface Props {
   config: SelectConfig
@@ -42,6 +43,8 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
   const [sectors, setSectors] = useState<string[]>([])
   const [showGuide, setShowGuide] = useState(false)
   const [requireUptrend, setRequireUptrend] = useState(true) // 温和放量：是否要求上升趋势
+  const [marketGate, setMarketGate] = useState(true) // 冰点市场暂停自动推荐
+  const [minRiskReward, setMinRiskReward] = useState(DEFAULT_MIN_RISK_REWARD)
 
   // 加载行业列表（板块下拉）
   useEffect(() => {
@@ -81,7 +84,13 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
     setResult(null)
     try {
       // 用选中的策略模板覆盖 config + 板块过滤 + 上升趋势开关
-      const pickConfig = { ...applyTemplate(activeTemplate, config), sector, requireUptrend }
+      const pickConfig = {
+        ...applyTemplate(activeTemplate, config),
+        sector,
+        requireUptrend,
+        marketGate,
+        minRiskReward,
+      }
       const r = await runDailyPick(pickConfig, { onProgress: setProgress, concurrency: 8 })
       setResult(r)
       // 自动把推荐的 4 只票加入监控（含买卖点）+ 存档复盘
@@ -194,6 +203,33 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
           </div>
         )}
 
+        <div className="strategy-select" style={{ marginTop: 8 }}>
+          <label className="uptrend-toggle">
+            <input
+              type="checkbox"
+              checked={marketGate}
+              onChange={(e) => setMarketGate(e.target.checked)}
+            />
+            市场情绪冰点时暂停今日推荐
+          </label>
+        </div>
+
+        <div className="strategy-select" style={{ marginTop: 8 }}>
+          <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="field-label">最低风险回报比</span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              step={0.1}
+              value={minRiskReward}
+              onChange={(e) => setMinRiskReward(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+              style={{ width: 80 }}
+            />
+            <span className="muted">默认 {DEFAULT_MIN_RISK_REWARD.toFixed(1)}，低于门槛不推荐</span>
+          </label>
+        </div>
+
         <p className="muted" style={{ margin: '8px 0 12px' }}>
           {activeTemplate.desc}。打分选 Top 4（行业分散），基于均线/前期高低点给出买入区间、止盈、止损。买卖点仅供参考，不构成投资建议。
         </p>
@@ -229,13 +265,18 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
             生成时间：{new Date(result.computedAt).toLocaleTimeString('zh-CN')} · 共{' '}
             {result.picks.length} 只
           </div>
+          {result.gateReason && result.picks.length > 0 && (
+            <div className="pick-summary muted">筛选说明：{result.gateReason}</div>
+          )}
           <div className="pick-grid">
             {result.picks.map((p, i) => (
               <PickCard key={p.code} pick={p} rank={i + 1} onSelect={onSelect} />
             ))}
           </div>
           {result.picks.length === 0 && (
-            <div className="error-banner">⚠️ 未选出符合条件的股票，请稍后重试</div>
+            <div className="error-banner">
+              ⚠️ {result.gateReason ?? '未选出符合条件的股票，请稍后重试'}
+            </div>
           )}
         </>
       )}

@@ -15,6 +15,10 @@ const DB_VERSION = 1
 
 const STORES = ['meta', 'stock_list', 'kline', 'financials', 'moneyflow'] as const
 
+// 盘中快照和 K 线会直接影响候选排序，不能沿用数小时级缓存。
+const STOCK_LIST_TTL = 5 * 60 * 1000
+const KLINE_TTL = 10 * 60 * 1000
+
 type StoreName = (typeof STORES)[number]
 
 interface CacheRecord<T> {
@@ -99,24 +103,29 @@ async function readStale<T>(store: StoreName, key: string): Promise<T | null> {
 
 // ---------- 具体数据类型的缓存接口 ----------
 
-/** 全市场快照：当天有效 */
+/** 股票快照：盘中 5 分钟内有效 */
 export const stockListCache = {
-  get: () => read<StockInfo[]>('stock_list', 'all', 12 * 3600 * 1000),
+  get: (pool: 'all' | 'hs300' | 'zz500' = 'all') =>
+    read<StockInfo[]>('stock_list', pool, STOCK_LIST_TTL),
   /** 跳过 TTL 读取（push2 限流降级用） */
-  getStale: () => readStale<StockInfo[]>('stock_list', 'all'),
-  set: (data: StockInfo[]) => putRecord('stock_list', 'all', data),
+  getStale: (pool: 'all' | 'hs300' | 'zz500' = 'all') =>
+    readStale<StockInfo[]>('stock_list', pool),
+  set: (data: StockInfo[], pool: 'all' | 'hs300' | 'zz500' = 'all') =>
+    putRecord('stock_list', pool, data),
 }
 
-/** K 线：3 小时内有效（盘中数据会变化） */
+/** K 线：盘中 10 分钟内有效，避免尾盘评分使用上午数据 */
 export const klineCache = {
-  get: (code: string) => read<Kline[]>('kline', code, 3 * 3600 * 1000),
+  get: (code: string) => read<Kline[]>('kline', code, KLINE_TTL),
   set: (code: string, data: Kline[]) => putRecord('kline', code, data),
 }
 
-/** 财务数据：每天有效（盘中不变） */
+/** 财务数据：最新快照与历史时点使用不同缓存键，避免日期互相覆盖。 */
 export const financialsCache = {
-  get: (code: string) => read<Financials>('financials', code, 24 * 3600 * 1000),
-  set: (code: string, data: Financials) => putRecord('financials', code, data),
+  get: (code: string, asOfDate?: string) =>
+    read<Financials>('financials', `financials:${code}:${asOfDate ?? 'latest'}`, 24 * 3600 * 1000),
+  set: (code: string, data: Financials) =>
+    putRecord('financials', `financials:${code}:${data.asOfDate ?? 'latest'}`, data),
 }
 
 /** 资金流：10 分钟内有效 */

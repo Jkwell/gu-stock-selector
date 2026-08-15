@@ -22,7 +22,9 @@
     "verify:fallback": "tsx scripts/verify-fallback.ts",
     "verify:quickrules": "tsx scripts/verify-quickrules.ts",
     "verify:rules": "tsx scripts/verify-rules.ts",
-    "verify:advice": "tsx scripts/verify-advice.ts"
+    "verify:advice": "tsx scripts/verify-advice.ts",
+    "verify:opt": "tsx scripts/verify-opt.ts",
+    "verify:financials": "tsx scripts/verify-financials.ts"
   },
   "dependencies": {
     "echarts": "^5.5.1",

@@ -48,23 +48,31 @@ export function computeFactorICs(
   const calcs = buildTechnicalCalculators()
   const nStocks = stocks.length
 
-  // 对齐日期：以第一只股票的日期轴为基准（所有股票应同频率）
-  const dateAxis = stocks[0]?.kline.map((k) => k.date) ?? []
+  // 对齐日期：使用所有股票日期并集，单只股票缺失日期时跳过该截面。
+  const dateSet = new Set<string>()
+  for (const s of stocks) for (const k of s.kline) dateSet.add(k.date)
+  const dateAxis = [...dateSet].sort()
   const nDays = dateAxis.length
 
   // 预计算每只股票每个因子的原始值矩阵
   // rawByFactor[factorIdx][stockIdx] = (number|null)[]
-  const rawByFactor = calcs.map((c) =>
-    stocks.map((s) => c.calc(s.kline)),
-  )
+  const rawByFactor = calcs.map((c) => stocks.map((s) => {
+    const raw = c.calc(s.kline)
+    const byDate = new Map(s.kline.map((k, i) => [k.date, raw[i] ?? null]))
+    return dateAxis.map((d) => byDate.get(d) ?? null)
+  }))
 
   // 未来收益矩阵
   // fwdReturn[stockIdx][i] = close[i+forwardDays]/close[i] - 1
   const fwdReturn = stocks.map((s) => {
     const close = s.kline.map((k) => k.close)
-    return close.map((c, i) =>
-      i + forwardDays < close.length ? close[i + forwardDays] / c - 1 : null,
-    )
+    const byDate = new Map(s.kline.map((k, i) => [
+      k.date,
+      i + forwardDays < close.length && Number.isFinite(close[i]) && close[i] > 0
+        ? close[i + forwardDays] / close[i] - 1
+        : null,
+    ]))
+    return dateAxis.map((d) => byDate.get(d) ?? null)
   })
 
   const results: FactorIC[] = calcs.map((c, fi) => {
@@ -102,7 +110,9 @@ export function computeFactorICs(
       }
     }
     const meanIC = icSeries.reduce((a, b) => a + b, 0) / n
-    const variance = icSeries.reduce((a, b) => a + (b - meanIC) ** 2, 0) / (n - 1)
+    const variance = n > 1
+      ? icSeries.reduce((a, b) => a + (b - meanIC) ** 2, 0) / (n - 1)
+      : 0
     const stdIC = Math.sqrt(variance)
     return {
       key: c.key,
@@ -127,10 +137,12 @@ export function computeFactorCorrelation(
   const out: Array<{ a: string; b: string; corr: number }> = []
   for (let i = 0; i < factors.length; i++) {
     for (let j = i + 1; j < factors.length; j++) {
-      const n = Math.min(factors[i].icSeries.length, factors[j].icSeries.length)
-      if (n < 5) continue
-      const xs = factors[i].icSeries.slice(-n)
-      const ys = factors[j].icSeries.slice(-n)
+      const a = new Map(factors[i].dates.map((d, k) => [d, factors[i].icSeries[k]]))
+      const b = new Map(factors[j].dates.map((d, k) => [d, factors[j].icSeries[k]]))
+      const shared = [...a.keys()].filter((d) => b.has(d))
+      if (shared.length < 5) continue
+      const xs = shared.map((d) => a.get(d)!)
+      const ys = shared.map((d) => b.get(d)!)
       out.push({ a: factors[i].key, b: factors[j].key, corr: pearsonCorr(xs, ys) })
     }
   }

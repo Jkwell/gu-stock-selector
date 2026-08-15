@@ -36,6 +36,9 @@ export interface TradingSignal {
 
 const round2 = (v: number) => Number(v.toFixed(2))
 
+/** 今日推荐默认最低风险回报比，低于此值不进入可执行推荐。 */
+export const DEFAULT_MIN_RISK_REWARD = 1.5
+
 /**
  * 计算买卖点
  * @param kline 日 K 线（升序，最后一根为最新）

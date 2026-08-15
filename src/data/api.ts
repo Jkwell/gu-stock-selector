@@ -369,13 +369,30 @@ interface FinancialsResponse {
   }
 }
 
-/** 最新报告期主要财务指标 */
-export async function fetchFinancials(code: string): Promise<Financials | null> {
+function normalizeAsOfDate(value?: string): string | undefined {
+  if (!value) return undefined
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`Invalid asOfDate: ${value}`)
+  }
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new Error(`Invalid asOfDate: ${value}`)
+  }
+  return value
+}
+
+/** 获取财务指标；指定 asOfDate 时只取披露日不晚于该日期的报告。 */
+export async function fetchFinancials(code: string, asOfDate?: string): Promise<Financials | null> {
+  const normalizedAsOf = normalizeAsOfDate(asOfDate)
+  const filter = normalizedAsOf
+    ? `(SECURITY_CODE="${code}")(NOTICE_DATE<='${normalizedAsOf}')`
+    : `(SECURITY_CODE="${code}")`
+  const sortColumns = normalizedAsOf ? 'NOTICE_DATE' : 'REPORTDATE'
   const url = isDev()
-    ? `/api/financials?code=${code}`
+    ? `/api/financials?code=${encodeURIComponent(code)}${normalizedAsOf ? `&asOfDate=${normalizedAsOf}` : ''}`
     : `${EM_DATA}?reportName=RPT_LICO_FN_CPD&columns=ALL&filter=${encodeURIComponent(
-        `(SECURITY_CODE="${code}")`,
-      )}&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORTDATE`
+        filter,
+      )}&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=${sortColumns}`
   const data = await fetchJson<FinancialsResponse>(url, {
     Referer: 'https://data.eastmoney.com/',
   })
@@ -386,9 +403,19 @@ export async function fetchFinancials(code: string): Promise<Financials | null> 
     const n = Number(v)
     return Number.isFinite(n) ? n : undefined
   }
+  const dateOnly = (v: unknown) => {
+    const value = String(v ?? '').slice(0, 10)
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+  }
+  const disclosureDate = dateOnly(row.NOTICE_DATE ?? row.ANN_DATE ?? row.PUBLIC_DATE)
+  // 上游接口若忽略时点过滤，宁可放弃该条数据，也不能把未来报告带入历史评分。
+  if (normalizedAsOf && (!disclosureDate || disclosureDate > normalizedAsOf)) return null
   return {
     code,
     reportDate: String(row.REPORTDATE ?? ''),
+    disclosureDate,
+    asOfDate: normalizedAsOf,
+    pointInTime: Boolean(normalizedAsOf),
     roe: num(row.WEIGHTAVG_ROE),
     revenueGrowth: num(row.YSTZ),
     profitGrowth: num(row.SJLTZ ?? row.SJLTZGC),
