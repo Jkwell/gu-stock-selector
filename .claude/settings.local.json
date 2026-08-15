@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(node proxy/index.mjs)",
+      "Bash(curl -s \"http://127.0.0.1:8787/clist?pn=1&pz=3&po=1&np=1&fltt=2&invt=2&fid=f12&fs=m%3A0%2Bt%3A6%2Cm%3A0%2Bt%3A80%2Cm%3A1%2Bt%3A2%2Cm%3A1%2Bt%3A23&fields=f2,f3,f9,f12,f13,f14,f20,f21,f23,f100\")",
+      "Bash(curl -s -m 10 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD&columns=ALL&filter=\\(SECURITY_CODE%3D%22600519%22\\)&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORTDATE' -H \"User-Agent: Mozilla/5.0\" -H \"Referer: https://data.eastmoney.com/\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('success:',d.get\\('success'\\)\\); r=\\(d.get\\('result'\\) or {}\\).get\\('data'\\) or []; print\\('rows:',len\\(r\\)\\); [print\\({k:v for k,v in row.items\\(\\) if k in \\('REPORTDATE','WEIGHTAVG_ROE','YSTZ','SJLTZ','XSMLL','ZCFZL','NOTICE_DATE'\\)}\\) for row in r]\")",
+      "Bash(curl -s -m 8 \"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=3&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f12&fs=b:BK0701&fields=f12,f14\" -H \"User-Agent: Mozilla/5.0\" -H \"Referer: https://quote.eastmoney.com/\")",
+      "Bash(npx tsx *)",
+      "Bash(npx tsc *)",
+      "Bash(pip install *)",
+      "Bash(python -m pip install *)",
+      "Bash(python -m uvicorn *)",
+      "Bash(cd d:/Agent/tradingAgents-astock && pip install -e *)",
+      "Bash(curl -s http://127.0.0.1:8000/*)",
+      "Bash(curl -X POST http://127.0.0.1:8000/*)",
+      "Bash(mkdir -p .tools)",
+      "Bash(curl -sL -m 120 -o .tools/gh.zip \"https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
+      "Bash(curl -sIL -m 30 \"https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(curl -sL --retry 3 --retry-delay 2 -m 180 -o .tools/gh.zip \"https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
+      "Bash(curl -skL -m 120 -o /d/Agent/gu/.tools/gh.zip \"https://gh-proxy.com/https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")"
+    ]
+  }
+}

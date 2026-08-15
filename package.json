@@ -1,0 +1,40 @@
+{
+  "name": "gu-stock-selector",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "mobile": "node proxy/index.mjs & vite --host",
+    "proxy": "node proxy/index.mjs",
+    "ai-server": "python -X utf8 -m uvicorn main:app --host 0.0.0.0 --port 8000 --app-dir ai-server",
+    "verify": "tsx scripts/verify-scoring.ts",
+    "verify:ic": "tsx scripts/verify-ic-backtest.ts",
+    "verify:industry": "tsx scripts/verify-industry.ts",
+    "verify:daily": "tsx scripts/verify-dailypick.ts",
+    "verify:strong": "tsx scripts/verify-strong.ts",
+    "verify:limitup": "tsx scripts/verify-limitup.ts",
+    "verify:monitor": "tsx scripts/verify-monitor.ts",
+    "verify:market": "tsx scripts/verify-market.ts",
+    "verify:concept": "tsx scripts/verify-concept.ts",
+    "verify:fallback": "tsx scripts/verify-fallback.ts",
+    "verify:quickrules": "tsx scripts/verify-quickrules.ts",
+    "verify:rules": "tsx scripts/verify-rules.ts",
+    "verify:advice": "tsx scripts/verify-advice.ts"
+  },
+  "dependencies": {
+    "echarts": "^5.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.23.12",
+    "typescript": "~5.6.2",
+    "vite": "^5.4.11"
+  }
+}
