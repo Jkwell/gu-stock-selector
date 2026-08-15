@@ -3,10 +3,17 @@
  * 策略：
  *  - 静态资源（index.html、js、css、icons）：缓存优先（Cache First）
  *  - 数据接口（/api/* 和外部行情）：网络优先（Network First），不缓存保证实时
+ * 部署路径自适应：GitHub Pages 子路径（/仓库名/）或自定义域名根路径均可用
  */
 
-const CACHE_NAME = 'stock-selector-v1'
-const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest']
+const CACHE_NAME = 'stock-selector-v2'
+// 注册作用域（如 https://user.github.io/repo/），strip 末尾斜杠后拼绝对路径
+const SCOPE = new URL(self.registration.scope).pathname.replace(/\/$/, '')
+const STATIC_ASSETS = [
+  SCOPE + '/',
+  SCOPE + '/index.html',
+  SCOPE + '/manifest.webmanifest',
+]
 
 self.addEventListener('install', (e) => {
   self.skipWaiting()
@@ -31,7 +38,7 @@ self.addEventListener('fetch', (e) => {
 
   // 数据接口不缓存（实时性优先）
   if (
-    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith(SCOPE + '/api/') ||
     url.hostname.includes('gtimg') ||
     url.hostname.includes('eastmoney') ||
     url.hostname.includes('sina')
