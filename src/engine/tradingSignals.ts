@@ -36,9 +36,6 @@ export interface TradingSignal {
 
 const round2 = (v: number) => Number(v.toFixed(2))
 
-/** 今日推荐默认最低风险回报比，低于此值不进入可执行推荐。 */
-export const DEFAULT_MIN_RISK_REWARD = 1.5
-
 /**
  * 计算买卖点
  * @param kline 日 K 线（升序，最后一根为最新）
@@ -80,6 +77,8 @@ export function computeTradingSignal(
   // 止损价：跌破支撑位 3%，且不低于 -5%（超短线止损收紧）
   let stopLoss = Math.min(ma, lowN) * 0.97
   stopLoss = Math.max(stopLoss, price * 0.95)
+  // 价格已跌破均线或近期低点时，技术支撑可能仍在现价上方；止损必须低于实际入场价。
+  stopLoss = Math.min(stopLoss, price * 0.99)
   stopLoss = round2(stopLoss)
 
   // 风险回报比

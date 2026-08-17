@@ -40,6 +40,11 @@ async function main() {
     ['风险回报比 > 0', sig1.riskReward > 0],
     ['买入区间包含现价', sig1.buyLow <= sig1.currentPrice && sig1.currentPrice <= sig1.buyHigh],
   ]
+  const gapDown = computeTradingSignal(uptrend, 80)
+  asserts.push([
+    '跳空跌破支撑时止损仍低于入场价',
+    gapDown !== null && gapDown.stopLoss < gapDown.currentPrice,
+  ])
   let pass = true
   for (const [name, ok] of asserts) {
     console.log(`  ${ok ? '✅' : '❌'} ${name}`)

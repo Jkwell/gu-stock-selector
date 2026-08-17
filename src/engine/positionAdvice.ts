@@ -2,7 +2,7 @@
  * 仓位建议：把情绪温度换算成具体仓位
  * 🔥 火热(≥70) → 8成仓
  * 😐 中性(40-70) → 5成仓
- * 🧊 冰点(<40) → 0成仓（空仓）
+ * 🧊 冰点(<40) → 2成仓（跟踪为主）
  */
 
 export interface PositionAdvice {
@@ -32,7 +32,7 @@ export function positionAdvice(temperature: number): PositionAdvice {
   return {
     temperature,
     level: 'cold',
-    position: 0,
-    text: '情绪冰点，建议空仓观望（0 成仓）',
+    position: 20,
+    text: '情绪偏弱，轻仓跟踪（建议 2 成仓）',
   }
 }

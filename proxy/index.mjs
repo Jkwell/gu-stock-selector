@@ -156,8 +156,11 @@ const server = http.createServer(async (req, res) => {
         return
       }
     }
+    const cause = err instanceof Error && err.cause ? `; cause: ${String(err.cause)}` : ''
+    const detail = `${String(err)}${cause}`
+    console.error(`[proxy] ${path} upstream request failed: ${detail}`)
     res.writeHead(502, { ...corsHeaders(), 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ code: 502, msg: String(err) }))
+    res.end(JSON.stringify({ code: 502, msg: 'upstream request failed', detail }))
   }
 })
 

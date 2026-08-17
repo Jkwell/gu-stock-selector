@@ -104,10 +104,6 @@ export interface SelectConfig {
   sector: string
   /** 温和放量：是否要求上升趋势（MA20>MA60 + 站上MA20 + MA20拐头），默认 true */
   requireUptrend?: boolean
-  /** 今日推荐：市场情绪冰点时暂停推荐，默认 true */
-  marketGate?: boolean
-  /** 今日推荐最低风险回报比，默认 1.5 */
-  minRiskReward?: number
 }
 
 /** 打分流水线产出 */

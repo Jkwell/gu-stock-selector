@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host",
+    "dev": "node scripts/dev-with-proxy.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "mobile": "node proxy/index.mjs & vite --host",
+    "mobile": "node scripts/dev-with-proxy.mjs",
     "proxy": "node proxy/index.mjs",
     "ai-server": "python -X utf8 -m uvicorn main:app --host 0.0.0.0 --port 8000 --app-dir ai-server",
     "verify": "tsx scripts/verify-scoring.ts",

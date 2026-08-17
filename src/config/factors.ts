@@ -154,8 +154,6 @@ export const DEFAULT_CONFIG: SelectConfig = {
   maxPerIndustry: 3,
   sector: 'all',
   requireUptrend: true,
-  marketGate: true,
-  minRiskReward: 1.5,
 }
 
 /** 策略模板：预设因子权重组合 */
@@ -272,7 +270,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
   {
     key: 'gentle_volume',
     name: '📈 温和放量',
-    desc: '东财条件选股：量比1.2~5 + 换手5~15% + 涨跌幅1~6%，资金温和活跃不追高',
+    desc: '轻量资金流：价格/PE/换手/涨跌幅粗筛 + 量比1.2~5 + 3日资金确认，避开追涨和异常标的',
     pool: 'all',
     candidateCount: 500,
     candidatePool: 'turnover',

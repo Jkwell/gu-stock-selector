@@ -3,13 +3,17 @@ import { lastValid, sma } from './indicators'
 
 /**
  * 温和放量筛选规则（东财条件选股规则）
- * 1. 量比：1.2 ≤ 量比 ≤ 5
- * 2. 换手率：5% ≤ 换手率 ≤ 15%
+ * 1. 价格：3 ~ 300 元，PE：0 ~ 300
+ * 2. 换手率：1% ~ 20%，涨跌幅：-4% ~ 6%
  * 3. 剔除：ST、退市、科创板、北交所
- * 4. 涨跌幅：1% ≤ 涨跌幅 ≤ 6%
+ * 4. K 线精筛：量比 1.2 ~ 5，并确认上升趋势
  */
 
 export interface QuickRules {
+  minPrice: number
+  maxPrice: number
+  minPe: number
+  maxPe: number
   minRatio: number // 量比下限
   maxRatio: number // 量比上限
   minTurnover: number // 换手率下限 %
@@ -19,24 +23,30 @@ export interface QuickRules {
 }
 
 export const DEFAULT_QUICK_RULES: QuickRules = {
+  minPrice: 3,
+  maxPrice: 300,
+  minPe: 0,
+  maxPe: 300,
   minRatio: 1.2,
   maxRatio: 5,
-  minTurnover: 5,
-  maxTurnover: 15,
-  minChange: 1,
+  minTurnover: 1,
+  maxTurnover: 20,
+  minChange: -4,
   maxChange: 6,
 }
 
-/** 快照字段粗筛：剔除 + 换手率 + 涨跌幅（无需 K 线） */
+/** 快照字段粗筛：价格、估值、换手和涨跌幅（无需 K 线）。 */
 export function filterByQuickRules(
   stocks: StockInfo[],
   rules: QuickRules = DEFAULT_QUICK_RULES,
 ): StockInfo[] {
   return stocks.filter((s) => {
     // 剔除 ST / 退市 / 科创板 / 北交所
-    if (/ST|退/.test(s.name)) return false
+    if (/ST|退|^N/.test(s.name)) return false
     if (s.code.startsWith('688')) return false
     if (s.market === 'bj' || s.code.startsWith('8') || s.code.startsWith('4') || s.code.startsWith('92')) return false
+    if (s.price === undefined || s.price < rules.minPrice || s.price > rules.maxPrice) return false
+    if (s.pe === undefined || s.pe <= rules.minPe || s.pe > rules.maxPe) return false
     // 换手率区间
     if (s.turnoverRate === undefined || s.turnoverRate < rules.minTurnover || s.turnoverRate > rules.maxTurnover) return false
     // 涨跌幅区间

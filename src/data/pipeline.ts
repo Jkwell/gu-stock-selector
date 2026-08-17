@@ -11,12 +11,10 @@ import { scoreStocks, type ScoringInput } from '../engine/factors'
 import { diversifyPortfolio } from '../engine/portfolio'
 import {
   computeTradingSignal,
-  DEFAULT_MIN_RISK_REWARD,
   isOneWordLimitUp,
 } from '../engine/tradingSignals'
 import { pickConceptLeaders } from '../engine/conceptLeader'
 import { filterByQuickRules, filterByVolumeRatio, isUptrend } from '../engine/quickRules'
-import { computeMarketSentiment, type MarketSentiment } from '../engine/marketSentiment'
 import type { FactorDef } from '../types'
 import {
   fetchFinancials,
@@ -478,40 +476,11 @@ export async function runDailyPick(
   }
 
   let marketSnapshot: StockInfo[] | null = null
-  let marketState: MarketSentiment | undefined
-  let marketGateWarning: string | undefined
   let tradeFilterWarning: string | undefined
-  const minRiskReward = Math.max(
-    0,
-    pickConfig.minRiskReward ?? DEFAULT_MIN_RISK_REWARD,
-  )
   const now = new Date()
   const h = now.getHours()
   const m = now.getMinutes()
   const isTailPeriod = (h === 14 && m >= 30) || h === 15
-
-  // 市场冰点时暂停自动推荐，避免个股评分掩盖系统性风险；数据失败则放行但明确提示。
-  if (pickConfig.marketGate !== false) {
-    onProgress({ stage: 'list', done: 0, total: 1, message: '检查市场情绪…' })
-    try {
-      marketSnapshot = await fetchMarketStocks()
-      marketState = computeMarketSentiment(marketSnapshot)
-      onProgress({ stage: 'list', done: 1, total: 1, message: `市场情绪 ${marketState.temperature}°` })
-      if (marketState.level === 'cold') {
-        onProgress({ stage: 'done', done: 1, total: 1, message: '市场处于冰点，暂停今日推荐' })
-        return {
-          picks: [],
-          computedAt: now.toISOString(),
-          isTailPeriod,
-          marketTemperature: marketState.temperature,
-          marketLevel: marketState.level,
-          gateReason: `市场情绪 ${marketState.temperature}°（冰点），今日暂停自动推荐`,
-        }
-      }
-    } catch {
-      marketGateWarning = '市场情绪数据暂时不可用，本次未执行情绪门控'
-    }
-  }
 
   // 识别当前模板类型
   const enabledKeys = new Set(config.factors.filter((f) => f.enabled).map((f) => f.key))
@@ -529,7 +498,13 @@ export async function runDailyPick(
     onProgress({ stage: 'list', done: 0, total: 1, message: '应用量比/换手筛选…' })
     const market = marketSnapshot ?? await fetchMarketStocks()
     const eligible = filterBySelectionConfig(market, pickConfig)
-    const quickFiltered = filterByQuickRules(eligible)
+    // 先按样例页的价格、估值、换手和涨跌幅规则粗筛；再混合高换手、趋势和动量来源取 500 只，
+    // 避免只偏向题材高换手股，也避免对全市场逐只拉 K 线和资金流。
+    const quickFiltered = selectCandidatePool(
+      filterByQuickRules(eligible),
+      pickConfig,
+      true,
+    )
     onProgress({ stage: 'list', done: 1, total: 1, message: `快筛后 ${quickFiltered.length} 只，算量比…` })
     const requireTrend = pickConfig.requireUptrend !== false // 默认要求上升趋势
     const qualified: ScoringInput[] = []
@@ -559,7 +534,7 @@ export async function runDailyPick(
         })
       }
     })
-    // 资金流是模板因子之一，先补齐快筛通过者，再按真实因子分排序。
+    // 参考样例页：主力净流入必须为正；没有资金流数据不进入最终排序。
     let moneyDone = 0
     await mapLimit(qualified, concurrency, async (input) => {
       let moneyFlow = await moneyflowCache.get(input.info.code)
@@ -577,9 +552,43 @@ export async function runDailyPick(
         onProgress({ stage: 'moneyflow', done: moneyDone, total: qualified.length, message: `补充资金流 ${moneyDone}/${qualified.length}…` })
       }
     })
+    const fundInflow = qualified.filter((input) => (input.moneyFlow?.mainNetInflow ?? 0) > 0)
     onProgress({ stage: 'scoring', done: 0, total: 1, message: '温和放量因子评分…' })
-    let scored = await scoreWithWorker(qualified, pickConfig.factors)
-    scored = diversifyPortfolio(scored, pickConfig.maxPerIndustry)
+    let scored = await scoreWithWorker(fundInflow, pickConfig.factors)
+
+    // 单日资金流容易受盘中大单扰动。仅核验评分靠前的候选，近 3 日累计为正者优先；
+    // 数量不足时仍回退到当日净流入为正的标的，避免弱市时完全没有可跟踪对象。
+    const historyCandidates = scored.slice(0, 24)
+    const strictFlowCodes = new Set<string>()
+    let historyDone = 0
+    await mapLimit(historyCandidates, Math.min(concurrency, 4), async (candidate) => {
+      const input = fundInflow.find((item) => item.info.code === candidate.code)
+      if (input) {
+        try {
+          const history = await fetchMoneyFlowHistory(input.info.market, input.info.code, 3)
+          input.moneyFlowHistory = history
+          if (history.reduce((sum, value) => sum + value, 0) > 0) {
+            strictFlowCodes.add(candidate.code)
+          }
+        } catch {
+          // 历史资金流不可用时，保留当日主力净流入为正的后备资格。
+        }
+      }
+      historyDone++
+      if (historyDone % 8 === 0 || historyDone === historyCandidates.length) {
+        onProgress({
+          stage: 'moneyflow',
+          done: historyDone,
+          total: historyCandidates.length,
+          message: `验证 3 日资金 ${historyDone}/${historyCandidates.length}…`,
+        })
+      }
+    })
+    const flowPrioritized = [
+      ...scored.filter((candidate) => strictFlowCodes.has(candidate.code)),
+      ...scored.filter((candidate) => !strictFlowCodes.has(candidate.code)),
+    ]
+    scored = diversifyPortfolio(flowPrioritized, pickConfig.maxPerIndustry)
     topCandidates = scored.slice(0, 12)
   } else if (isConceptLeader) {
     onProgress({ stage: 'list', done: 0, total: 1, message: '分析热点概念题材…' })
@@ -625,7 +634,6 @@ export async function runDailyPick(
   // 对候选强制拉最新 K 线（绕过缓存，确保最后一根是尾盘实时价）
   const picks: DailyPick[] = []
   let rejectedOneWord = 0
-  let rejectedRiskReward = 0
   for (let i = 0; i < topCandidates.length; i++) {
     const s = topCandidates[i]
     let kline: Kline[] = []
@@ -648,8 +656,6 @@ export async function runDailyPick(
         const oneWord = isOneWordLimitUp(kline, isWide ? 0.2 : 0.1)
         if (oneWord) {
           rejectedOneWord++
-        } else if (signal.riskReward < minRiskReward) {
-          rejectedRiskReward++
         } else if (picks.length < 4) {
           picks.push({
             code: s.code,
@@ -683,15 +689,12 @@ export async function runDailyPick(
 
   const filterNotes: string[] = []
   if (rejectedOneWord > 0) filterNotes.push(`剔除一字板 ${rejectedOneWord} 只`)
-  if (rejectedRiskReward > 0) filterNotes.push(`剔除风险回报比低于 ${minRiskReward.toFixed(1)} 的 ${rejectedRiskReward} 只`)
   tradeFilterWarning = filterNotes.length > 0 ? filterNotes.join('，') : undefined
 
   return {
     picks,
     computedAt: now.toISOString(),
     isTailPeriod,
-    marketTemperature: marketState?.temperature,
-    marketLevel: marketState?.level,
-    gateReason: [marketGateWarning, tradeFilterWarning].filter(Boolean).join('；') || undefined,
+    gateReason: tradeFilterWarning,
   }
 }

@@ -79,7 +79,7 @@ export function computeMarketSentiment(stocks: StockInfo[]): MarketSentiment {
     advice = `情绪一般（涨停 ${limitUp} 家）· 谨慎参与，控制仓位`
   } else {
     level = 'cold'
-    advice = `情绪冰点（涨停仅 ${limitUp} 家）· 建议空仓观望，等情绪回暖`
+    advice = `情绪偏弱（涨停仅 ${limitUp} 家）· 降低仓位，以跟踪和小仓试错为主`
   }
 
   return {

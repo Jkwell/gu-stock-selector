@@ -22,7 +22,9 @@
       "Bash(curl -sIL -m 30 \"https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
       "Bash(echo \"EXIT:$?\")",
       "Bash(curl -sL --retry 3 --retry-delay 2 -m 180 -o .tools/gh.zip \"https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
-      "Bash(curl -skL -m 120 -o /d/Agent/gu/.tools/gh.zip \"https://gh-proxy.com/https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")"
+      "Bash(curl -skL -m 120 -o /d/Agent/gu/.tools/gh.zip \"https://gh-proxy.com/https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip\")",
+      "Bash(git worktree *)",
+      "Bash(gh api *)"
     ]
   }
 }

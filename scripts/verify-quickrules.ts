@@ -5,20 +5,28 @@
 import { filterByQuickRules, calcVolumeRatio, filterByVolumeRatio } from '../src/engine/quickRules'
 import type { Kline, StockInfo } from '../src/types'
 
-const mk = (code: string, name: string, turnover: number, changePct: number, market: 'sh' | 'sz' = 'sh'): StockInfo => ({
-  code, name, market, turnoverRate: turnover, changePct,
+const mk = (
+  code: string,
+  name: string,
+  turnover: number,
+  changePct: number,
+  price = 20,
+  pe = 30,
+  market: 'sh' | 'sz' = 'sh',
+): StockInfo => ({
+  code, name, market, turnoverRate: turnover, changePct, price, pe,
 })
 
 console.log('=== 1. 快照粗筛（换手/涨跌幅/剔除） ===')
 const stocks: StockInfo[] = [
-  mk('600001', '放量好票', 8, 3),      // ✅ 全部满足
-  mk('600002', '换手太低', 2, 3),      // ❌ 换手<5
-  mk('600003', '换手太高', 20, 3),     // ❌ 换手>15
-  mk('600004', '涨幅太高', 8, 8),      // ❌ 涨跌>6
-  mk('600005', '涨幅为负', 8, -2),     // ❌ 涨跌<1
-  mk('688001', '科创板股', 8, 3),      // ❌ 688
-  mk('600006', 'ST风险', 8, 3),        // ❌ ST
-  mk('830001', '北交所股', 8, 3, 'bj'), // ❌ 北交所
+  mk('600001', '放量好票', 8, 3),             // ✅ 全部满足
+  mk('600002', '价格太低', 8, 3, 2),           // ❌ 价格<3
+  mk('600003', '换手太高', 21, 3),             // ❌ 换手>20
+  mk('600004', '涨幅太高', 8, 6.1),            // ❌ 涨跌>6
+  mk('600005', '估值太高', 8, 3, 20, 301),     // ❌ PE>300
+  mk('688001', '科创板股', 8, 3),              // ❌ 688
+  mk('600006', 'ST风险', 8, 3),                // ❌ ST
+  mk('830001', '北交所股', 8, 3, 20, 30, 'bj'), // ❌ 北交所
 ]
 const filtered = filterByQuickRules(stocks)
 console.log(`  过滤后 ${filtered.length} 只（期望 1）:`, filtered.map((s) => s.name).join(', '))

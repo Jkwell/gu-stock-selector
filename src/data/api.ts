@@ -9,8 +9,8 @@ import type {
 
 /**
  * 数据获取模块
- * 本地开发：走 /api/* 代理（Vite proxy → proxy/index.mjs，有缓存/降级）
- * 生产部署：直连数据源（所有接口已验证 CORS 允许，无需代理）
+ * 东财接口：浏览器 JSONP 优先，绕过跨域 fetch 的 CORS 限制。
+ * 本地开发：JSONP 失败时回退 /api/* 代理（Vite proxy → proxy/index.mjs）。
  */
 
 // ---- 数据源直连 URL（生产环境） ----
@@ -35,6 +35,82 @@ const isDev = () => {
   } catch {
     return false // tsx 脚本等无 Vite env 环境 → 走直连
   }
+}
+
+const EM_JSONP_MIN_INTERVAL_MS = 300
+let eastmoneyJsonpQueue: Promise<void> = Promise.resolve()
+let nextEastmoneyJsonpAt = 0
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function fetchJsonp<T>(url: string, callbackName: string, timeoutMs = 12000): Promise<T> {
+  if (typeof document === 'undefined') {
+    return Promise.reject(new Error('JSONP 只能在浏览器环境使用'))
+  }
+  return new Promise<T>((resolve, reject) => {
+    const script = document.createElement('script')
+    const scope = window as unknown as Record<string, (data: T) => void>
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      delete scope[callbackName]
+      script.remove()
+    }
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const timer = window.setTimeout(
+      () => settle(() => reject(new Error('东财 JSONP 请求超时'))),
+      timeoutMs,
+    )
+    scope[callbackName] = (data) => settle(() => resolve(data))
+    script.onerror = () => settle(() => reject(new Error('东财 JSONP 网络请求失败')))
+    script.src = url
+    document.head.appendChild(script)
+  })
+}
+
+function queueEastmoneyJsonp<T>(request: () => Promise<T>): Promise<T> {
+  const run = async () => {
+    const wait = Math.max(0, nextEastmoneyJsonpAt - Date.now())
+    if (wait > 0) await delay(wait)
+    nextEastmoneyJsonpAt = Date.now() + EM_JSONP_MIN_INTERVAL_MS
+    return request()
+  }
+  const result = eastmoneyJsonpQueue.then(run, run)
+  eastmoneyJsonpQueue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
+
+async function fetchEastmoneyJsonp<T>(
+  endpoint: string,
+  params: URLSearchParams,
+  timeoutMs = 12000,
+): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const callbackName = `emcb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const query = new URLSearchParams(params)
+    query.set('cb', callbackName)
+    query.set('_', String(Date.now()))
+    try {
+      return await queueEastmoneyJsonp(() =>
+        fetchJsonp<T>(`${endpoint}?${query.toString()}`, callbackName, timeoutMs),
+      )
+    } catch (error) {
+      lastError = error
+      if (attempt === 0) await delay(600)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('东财 JSONP 请求失败')
 }
 
 function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T> {
@@ -134,13 +210,16 @@ export async function fetchStockList(
       fs,
       fields,
     })
-    if (!isDev()) params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281') // 板块查询需 ut
-    const url = isDev()
-      ? `/api/clist?${params.toString()}`
-      : `${EM_CLIST}?${params.toString()}`
-    const data = await fetchJson<ClistResponse>(url, {
-      Referer: 'https://quote.eastmoney.com/',
-    })
+    params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
+    let data: ClistResponse
+    try {
+      data = await fetchEastmoneyJsonp<ClistResponse>(EM_CLIST, params)
+    } catch (jsonpError) {
+      if (!isDev()) throw jsonpError
+      data = await fetchJson<ClistResponse>(`/api/clist?${params.toString()}`, {
+        Referer: 'https://quote.eastmoney.com/',
+      })
+    }
     const list = data.data?.diff ?? []
     for (const s of parseClistDiff(list)) {
       if (seen.has(s.code)) continue
@@ -166,6 +245,28 @@ export async function fetchStockListSina(): Promise<StockInfo[]> {
     const n = Number(v)
     return Number.isFinite(n) ? n : undefined
   }
+  // 本地代理已一次取完全部节点；不能再按前端页码重复请求，否则会无限循环。
+  if (isDev()) {
+    const data = await fetchJson<any>(dev(`/sina-list?nodes=${nodes.join(',')}`))
+    const rows = data?.data?.diff ?? []
+    for (const r of rows) {
+      const code = String(r.code ?? r.f12 ?? '')
+      if (!code) continue
+      all.push({
+        code,
+        name: String(r.name ?? r.f14 ?? code),
+        market: (r.market ?? (code.startsWith('6') ? 'sh' : 'sz')) as StockInfo['market'],
+        price: toNum(r.trade ?? r.f2),
+        changePct: toNum(r.changepercent ?? r.f3),
+        totalMv: toNum(r.mktcap) ? toNum(r.mktcap)! * 10000 : undefined,
+        floatMv: toNum(r.nmc) ? toNum(r.nmc)! * 10000 : undefined,
+        pe: toNum(r.per ?? r.f9),
+        pb: toNum(r.pb ?? r.f23),
+        turnoverRate: toNum(r.turnoverratio ?? r.f8),
+      })
+    }
+    return all
+  }
   for (const node of nodes) {
     let page = 1
     for (;;) {
@@ -176,16 +277,9 @@ export async function fetchStockListSina(): Promise<StockInfo[]> {
         asc: '1',
         node,
       })
-      const url = dev(`/sina-list?nodes=${nodes.join(',')}`)
-      let rows: any[] = []
-      if (isDev()) {
-        const d = await fetchJson<any>(url)
-        rows = d?.data?.diff ?? []
-      } else {
-        rows = await fetchJson<any>(`${SINA_LIST}?${params.toString()}`, {
-          Referer: 'http://vip.stock.finance.sina.com.cn/',
-        })
-      }
+      const rows = await fetchJson<any>(`${SINA_LIST}?${params.toString()}`, {
+        Referer: 'http://vip.stock.finance.sina.com.cn/',
+      })
       if (!Array.isArray(rows) || rows.length === 0) break
       for (const r of rows) {
         const code = String(r.code ?? r.f12 ?? '')
@@ -331,9 +425,22 @@ export async function fetchMoneyFlow(
   code: string,
 ): Promise<MoneyFlow | null> {
   const secid = secidOf(market, code)
-  const query = `secid=${secid}&lmt=1&klt=101&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`
-  const url = isDev() ? `/api/fflow?${query}` : `${EM_FFLOW}?${query}`
-  const data = await fetchJson<FflowResponse>(url, { Referer: 'https://quote.eastmoney.com/' })
+  const query = new URLSearchParams({
+    secid,
+    lmt: '1',
+    klt: '101',
+    fields1: 'f1,f2,f3,f7',
+    fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
+  })
+  let data: FflowResponse
+  try {
+    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW, query)
+  } catch (jsonpError) {
+    if (!isDev()) throw jsonpError
+    data = await fetchJson<FflowResponse>(`/api/fflow?${query.toString()}`, {
+      Referer: 'https://quote.eastmoney.com/',
+    })
+  }
   const line = data.data?.klines?.[0]
   if (!line) return null
   const p = line.split(',')
@@ -353,9 +460,22 @@ export async function fetchMoneyFlowHistory(
   lmt = 5,
 ): Promise<number[]> {
   const secid = secidOf(market, code)
-  const query = `lmt=${lmt}&klt=101&secid=${secid}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`
-  const url = isDev() ? `/api/fflow-history?${query}` : `${EM_FFLOW_HIS}?${query}`
-  const data = await fetchJson<FflowResponse>(url, { Referer: 'https://quote.eastmoney.com/' })
+  const query = new URLSearchParams({
+    lmt: String(lmt),
+    klt: '101',
+    secid,
+    fields1: 'f1,f2,f3,f7',
+    fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
+  })
+  let data: FflowResponse
+  try {
+    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW_HIS, query)
+  } catch (jsonpError) {
+    if (!isDev()) throw jsonpError
+    data = await fetchJson<FflowResponse>(`/api/fflow-history?${query.toString()}`, {
+      Referer: 'https://quote.eastmoney.com/',
+    })
+  }
   const klines = data.data?.klines ?? []
   return klines.map((line) => {
     const p = line.split(',')
@@ -388,14 +508,27 @@ export async function fetchFinancials(code: string, asOfDate?: string): Promise<
     ? `(SECURITY_CODE="${code}")(NOTICE_DATE<='${normalizedAsOf}')`
     : `(SECURITY_CODE="${code}")`
   const sortColumns = normalizedAsOf ? 'NOTICE_DATE' : 'REPORTDATE'
-  const url = isDev()
-    ? `/api/financials?code=${encodeURIComponent(code)}${normalizedAsOf ? `&asOfDate=${normalizedAsOf}` : ''}`
-    : `${EM_DATA}?reportName=RPT_LICO_FN_CPD&columns=ALL&filter=${encodeURIComponent(
-        filter,
-      )}&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=${sortColumns}`
-  const data = await fetchJson<FinancialsResponse>(url, {
-    Referer: 'https://data.eastmoney.com/',
+  const query = new URLSearchParams({
+    reportName: 'RPT_LICO_FN_CPD',
+    columns: 'ALL',
+    filter,
+    pageNumber: '1',
+    pageSize: '1',
+    sortTypes: '-1',
+    sortColumns,
   })
+  let data: FinancialsResponse
+  try {
+    data = await fetchEastmoneyJsonp<FinancialsResponse>(EM_DATA, query)
+  } catch (jsonpError) {
+    if (!isDev()) throw jsonpError
+    const path = `/api/financials?code=${encodeURIComponent(code)}${
+      normalizedAsOf ? `&asOfDate=${normalizedAsOf}` : ''
+    }`
+    data = await fetchJson<FinancialsResponse>(path, {
+      Referer: 'https://data.eastmoney.com/',
+    })
+  }
   const row = data.result?.data?.[0]
   if (!row) return null
   const num = (v: unknown) => {
