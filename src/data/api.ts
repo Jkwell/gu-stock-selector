@@ -15,14 +15,20 @@ import type {
 
 // ---- 数据源直连 URL（生产环境） ----
 const TEN_QUOTE = 'https://qt.gtimg.cn/q=' // 腾讯实时行情（GBK）
-const TEN_KLINE = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get'
-const TEN_MINUTE = 'https://web.ifzq.gtimg.cn/appstock/app/minute/query'
+// 注意：用 ifzq.gtimg.cn（不带 web. 前缀）。web.ifzq.gtimg.cn 被腾讯 WAF 拦截（跨域 501 跳 waf.tencent.com）。
+// ifzq.gtimg.cn 正常时返回 Access-Control-Allow-Origin:* 可直连，但批量请求会触发按 IP 的 burst 限流
+// （评分类日 K 有上千根，量一大就全部 501）。TEN_KLINE_MIRROR（proxy.finance.qq.com 的 newfqkline）同为
+// 腾讯 K 线、返回相同 JSON 结构且 CORS 开放，作为降级镜像：主源被限流时自动切换。
+const TEN_KLINE = 'https://ifzq.gtimg.cn/appstock/app/fqkline/get'
+const TEN_KLINE_MIRROR =
+  'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get'
+const TEN_MINUTE = 'https://ifzq.gtimg.cn/appstock/app/minute/query'
 const EM_CLIST = 'https://push2.eastmoney.com/api/qt/clist/get'
 const EM_FFLOW = 'https://push2.eastmoney.com/api/qt/stock/fflow/kline/get'
 const EM_FFLOW_HIS = 'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
 const EM_DATA = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
 const SINA_LIST =
-  'http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
+  'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
@@ -37,9 +43,12 @@ const isDev = () => {
   }
 }
 
-const EM_JSONP_MIN_INTERVAL_MS = 300
-let eastmoneyJsonpQueue: Promise<void> = Promise.resolve()
-let nextEastmoneyJsonpAt = 0
+// 会话内标记：东财 push2 主源已被封锁/不可达 → 后续请求直接走 push2delay 镜像，
+// 避免批量请求每页都在主源上空等超时。
+let eastmoneyPrimaryDown = false
+// 腾讯 K 线主源（ifzq.gtimg.cn）被 WAF 限流(501)后，本会话内直接改用镜像，
+// 避免上千根 K 线里每一根都先撞一次 501 浪费超时。
+let tencentKlinePrimaryDown = false
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -75,44 +84,6 @@ function fetchJsonp<T>(url: string, callbackName: string, timeoutMs = 12000): Pr
   })
 }
 
-function queueEastmoneyJsonp<T>(request: () => Promise<T>): Promise<T> {
-  const run = async () => {
-    const wait = Math.max(0, nextEastmoneyJsonpAt - Date.now())
-    if (wait > 0) await delay(wait)
-    nextEastmoneyJsonpAt = Date.now() + EM_JSONP_MIN_INTERVAL_MS
-    return request()
-  }
-  const result = eastmoneyJsonpQueue.then(run, run)
-  eastmoneyJsonpQueue = result.then(
-    () => undefined,
-    () => undefined,
-  )
-  return result
-}
-
-async function fetchEastmoneyJsonp<T>(
-  endpoint: string,
-  params: URLSearchParams,
-  timeoutMs = 12000,
-): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const callbackName = `emcb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    const query = new URLSearchParams(params)
-    query.set('cb', callbackName)
-    query.set('_', String(Date.now()))
-    try {
-      return await queueEastmoneyJsonp(() =>
-        fetchJsonp<T>(`${endpoint}?${query.toString()}`, callbackName, timeoutMs),
-      )
-    } catch (error) {
-      lastError = error
-      if (attempt === 0) await delay(600)
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('东财 JSONP 请求失败')
-}
-
 function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T> {
   return fetch(url, {
     headers: { 'User-Agent': UA, ...headers },
@@ -121,6 +92,32 @@ function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T>
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`)
     return res.json() as Promise<T>
   })
+}
+
+/**
+ * 生产直连东财（CORS 直连，不走 JSONP）：EM 接口对任意 Origin 反射
+ * Access-Control-Allow-Origin，浏览器可直接 fetch，从而让 pipeline 的
+ * 并发(8)真正生效——JSONP 的全局 300ms 串行队列会把批量请求拖到几十分钟。
+ * push2 主源不可达时切 push2delay 延迟镜像（约 15 分钟延迟，可接受降级）。
+ */
+async function emDirect<T>(primary: string, params: URLSearchParams): Promise<T> {
+  const mirror = primary.replace(/push2(his)?\.eastmoney\.com/, 'push2delay.eastmoney.com')
+  const hasMirror = mirror !== primary
+  const hosts = hasMirror && eastmoneyPrimaryDown ? [mirror] : hasMirror ? [primary, mirror] : [primary]
+  let lastError: unknown
+  for (const host of hosts) {
+    try {
+      return await fetchJson<T>(`${host}?${params.toString()}`, {
+        Referer: 'https://quote.eastmoney.com/',
+      })
+    } catch (error) {
+      lastError = error
+      if (host === primary && hasMirror && !eastmoneyPrimaryDown) {
+        eastmoneyPrimaryDown = true
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('东财接口直连失败')
 }
 
 /** 腾讯实时行情快照 */
@@ -185,6 +182,52 @@ function parseClistDiff(diff: Array<Record<string, number | string | null>>): St
  *  - hs300: 沪深300 成分
  *  - zz500: 中证500 成分
  */
+/** 生产直连：单页 clist JSONP，主源失败即切延迟镜像并置会话标记 */
+const EM_CLIST_MIRROR = 'https://push2delay.eastmoney.com/api/qt/clist/get'
+const EM_CLIST_TIMEOUT_MS = 8000
+const EM_CLIST_CONCURRENCY = 5
+
+async function fetchClistJsonp(
+  page: number,
+  fs: string,
+  fields: string,
+  pz: number,
+): Promise<ClistResponse> {
+  const params = new URLSearchParams({
+    pn: String(page),
+    pz: String(pz),
+    po: '1',
+    np: '1',
+    fltt: '2',
+    invt: '2',
+    fid: 'f12',
+    fs,
+    fields,
+  })
+  params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
+  const hosts = eastmoneyPrimaryDown ? [EM_CLIST_MIRROR] : [EM_CLIST, EM_CLIST_MIRROR]
+  let lastError: unknown
+  for (const host of hosts) {
+    const callbackName = `emcb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const query = new URLSearchParams(params)
+    query.set('cb', callbackName)
+    query.set('_', String(Date.now()))
+    try {
+      return await fetchJsonp<ClistResponse>(
+        `${host}?${query.toString()}`,
+        callbackName,
+        EM_CLIST_TIMEOUT_MS,
+      )
+    } catch (error) {
+      lastError = error
+      // 主源不可达 → 本会话后续分页直接走镜像，避免每页 8s 空等
+      if (host === EM_CLIST && !eastmoneyPrimaryDown) eastmoneyPrimaryDown = true
+      await delay(200)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('东财 clist JSONP 请求失败')
+}
+
 export async function fetchStockList(
   pool: 'all' | 'hs300' | 'zz500' = 'all',
 ): Promise<StockInfo[]> {
@@ -198,39 +241,67 @@ export async function fetchStockList(
   const all: StockInfo[] = []
   const seen = new Set<string>() // 按代码去重，防止代理兜底缓存重复页导致候选池重复
   const pz = 100 // 东财 clist 单页上限 100
-  let page = 1
-  for (;;) {
-    const params = new URLSearchParams({
-      pn: String(page),
-      pz: String(pz),
-      po: '1',
-      np: '1',
-      fltt: '2',
-      invt: '2',
-      fid: 'f12',
-      fs,
-      fields,
-    })
-    params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
-    let data: ClistResponse
-    if (isDev()) {
-      // 本地开发优先走代理（代理内置 push2delay 镜像兜底），
-      // 避免直连被封锁/限流的 push2 时每次 JSONP 都空等超时拖慢整条流水线
-      data = await fetchJson<ClistResponse>(`/api/clist?${params.toString()}`, {
-        Referer: 'https://quote.eastmoney.com/',
-      })
-    } else {
-      data = await fetchEastmoneyJsonp<ClistResponse>(EM_CLIST, params)
-    }
-    const list = data.data?.diff ?? []
-    for (const s of parseClistDiff(list)) {
+  const merge = (diff: Array<Record<string, number | string | null>> | undefined) => {
+    if (!diff) return
+    for (const s of parseClistDiff(diff)) {
       if (seen.has(s.code)) continue
       seen.add(s.code)
       all.push(s)
     }
-    const total = Number(data.data?.total ?? 0)
-    if (all.length >= total || list.length === 0 || page > 40) break
-    page++
+  }
+  if (isDev()) {
+    // 本地开发优先走代理（代理内置 push2delay 镜像兜底），
+    // 避免直连被封锁/限流的 push2 时每次 JSONP 都空等超时拖慢整条流水线
+    let page = 1
+    for (;;) {
+      const params = new URLSearchParams({
+        pn: String(page),
+        pz: String(pz),
+        po: '1',
+        np: '1',
+        fltt: '2',
+        invt: '2',
+        fid: 'f12',
+        fs,
+        fields,
+      })
+      params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
+      const data = await fetchJson<ClistResponse>(`/api/clist?${params.toString()}`, {
+        Referer: 'https://quote.eastmoney.com/',
+      })
+      merge(data.data?.diff ?? [])
+      const total = Number(data.data?.total ?? 0)
+      if (all.length >= total || (data.data?.diff?.length ?? 0) === 0 || page > 40) break
+      page++
+    }
+    return all
+  }
+  // 生产直连：第 1 页既取数据也做主源健康探测（失败即刻切镜像会话）
+  const first = await fetchClistJsonp(1, fs, fields, pz)
+  merge(first.data?.diff)
+  const total = Number(first.data?.total ?? 0)
+  const totalPages = Math.min(Math.max(Math.ceil(total / pz), 1), 40)
+  // 剩余分页并发拉取（主源已挂则全部直走镜像，6 页并发 ~几秒内完成）
+  if (totalPages > 1) {
+    const rest: number[] = []
+    for (let page = 2; page <= totalPages; page++) rest.push(page)
+    let cursor = 0
+    const workers = Array.from(
+      { length: Math.min(EM_CLIST_CONCURRENCY, rest.length) },
+      async () => {
+        while (cursor < rest.length) {
+          const page = rest[cursor++]
+          try {
+            const d = await fetchClistJsonp(page, fs, fields, pz)
+            merge(d.data?.diff)
+          } catch (error) {
+            // 单页失败不致命，缺一两页由后续候选池容错
+            console.warn(`⚠ clist 第 ${page}/${totalPages} 页失败，跳过:`, error)
+          }
+        }
+      },
+    )
+    await Promise.all(workers)
   }
   return all
 }
@@ -391,19 +462,7 @@ interface TencentKlineResponse {
   data?: Record<string, { qfqday?: string[][]; day?: string[][] }>
 }
 
-/** 历史日 K 线（前复权），lmt 控制根数 */
-export async function fetchKline(
-  market: StockInfo['market'],
-  code: string,
-  lmt = 160,
-): Promise<Kline[]> {
-  const key = `${market === 'sh' ? 'sh' : 'sz'}${code}`
-  const url = isDev()
-    ? `/api/kline?market=${market}&code=${code}&lmt=${lmt}`
-    : `${TEN_KLINE}?param=${encodeURIComponent(`${key},day,,,${lmt},qfq`)}`
-  const data = await fetchJson<TencentKlineResponse>(url, { Referer: 'https://gu.qq.com/' })
-  const node = data.data?.[key]
-  const rows = node?.qfqday ?? node?.day ?? []
+function toKlines(rows: string[][]): Kline[] {
   return rows.map((p) => ({
     date: p[0],
     open: Number(p[1]),
@@ -413,6 +472,42 @@ export async function fetchKline(
     volume: Number(p[5]) || 0,
     amount: 0,
   }))
+}
+
+/** 历史日 K 线（前复权），lmt 控制根数。
+ *  生产直连：ifzq.gtimg.cn 批量触发 WAF 限流(501)时自动切 proxy.finance.qq.com 镜像（同结构），
+ *  镜像也失败才抛错。两个腾讯源的数据格式一致（data[key].qfqday）。 */
+export async function fetchKline(
+  market: StockInfo['market'],
+  code: string,
+  lmt = 160,
+): Promise<Kline[]> {
+  const key = `${market === 'sh' ? 'sh' : 'sz'}${code}`
+  if (isDev()) {
+    const data = await fetchJson<TencentKlineResponse>(
+      `/api/kline?market=${market}&code=${code}&lmt=${lmt}`,
+    )
+    const rows = data.data?.[key]?.qfqday ?? data.data?.[key]?.day ?? []
+    return toKlines(rows)
+  }
+  const hosts = tencentKlinePrimaryDown ? [TEN_KLINE_MIRROR] : [TEN_KLINE, TEN_KLINE_MIRROR]
+  let lastError: unknown
+  for (const host of hosts) {
+    try {
+      const url = `${host}?param=${encodeURIComponent(`${key},day,,,${lmt},qfq`)}`
+      const data = await fetchJson<TencentKlineResponse>(url, {
+        Referer: 'https://gu.qq.com/',
+      })
+      const node = data.data?.[key]
+      const rows = node?.qfqday ?? node?.day ?? []
+      if (rows.length > 0) return toKlines(rows)
+      lastError = new Error(`腾讯K线空数据: ${key}`)
+    } catch (error) {
+      lastError = error
+      if (host === TEN_KLINE && !tencentKlinePrimaryDown) tencentKlinePrimaryDown = true
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`腾讯K线获取失败: ${key}`)
 }
 
 interface FflowResponse {
@@ -440,7 +535,7 @@ export async function fetchMoneyFlow(
       Referer: 'https://quote.eastmoney.com/',
     })
   } else {
-    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW, query)
+    data = await emDirect<FflowResponse>(EM_FFLOW, query)
   }
   const line = data.data?.klines?.[0]
   if (!line) return null
@@ -474,7 +569,7 @@ export async function fetchMoneyFlowHistory(
       Referer: 'https://quote.eastmoney.com/',
     })
   } else {
-    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW_HIS, query)
+    data = await emDirect<FflowResponse>(EM_FFLOW_HIS, query)
   }
   const klines = data.data?.klines ?? []
   return klines.map((line) => {
@@ -526,7 +621,7 @@ export async function fetchFinancials(code: string, asOfDate?: string): Promise<
       Referer: 'https://data.eastmoney.com/',
     })
   } else {
-    data = await fetchEastmoneyJsonp<FinancialsResponse>(EM_DATA, query)
+    data = await emDirect<FinancialsResponse>(EM_DATA, query)
   }
   const row = data.result?.data?.[0]
   if (!row) return null
