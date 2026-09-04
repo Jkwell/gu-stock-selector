@@ -1,19 +1,20 @@
 /**
  * 买卖点计算验证脚本
  * 运行：npx tsx scripts/verify-dailypick.ts
- * 1) 构造 K 线验证买卖点合理区间
+ * 1) 构造 K 线验证买卖点合理区间（含 ATR 波动率止损）
  * 2) 拉真实 K 线验证（需 proxy 运行）
  */
 import { computeTradingSignal } from '../src/engine/tradingSignals'
+import { atr, lastValid } from '../src/engine/indicators'
 import type { Kline } from '../src/types'
 
-function makeKline(closes: number[]): Kline[] {
+function makeKline(closes: number[], amp = 0.02): Kline[] {
   return closes.map((c, i) => ({
     date: `2026-01-${String(i + 1).padStart(2, '0')}`,
     open: c,
     close: c,
-    high: c * 1.02,
-    low: c * 0.98,
+    high: c * (1 + amp),
+    low: c * (1 - amp),
     volume: 10000,
     amount: 0,
   }))
@@ -39,12 +40,24 @@ async function main() {
     ['止盈 > 现价', sig1.takeProfit > sig1.currentPrice],
     ['风险回报比 > 0', sig1.riskReward > 0],
     ['买入区间包含现价', sig1.buyLow <= sig1.currentPrice && sig1.currentPrice <= sig1.buyHigh],
+    ['止损距离在 [-8%, -2%] 区间', sig1.stopLoss >= sig1.currentPrice * 0.92 && sig1.stopLoss <= sig1.currentPrice * 0.98],
+    ['reasons 已切换为 ATR 语义', sig1.reasons.join(' ').includes('ATR') && !sig1.reasons.join(' ').includes('的 3%')],
   ]
   const gapDown = computeTradingSignal(uptrend, 80)
   asserts.push([
     '跳空跌破支撑时止损仍低于入场价',
     gapDown !== null && gapDown.stopLoss < gapDown.currentPrice,
   ])
+
+  // ATR 波动率相关性：同收盘价、不同振幅 → 高波动止损更宽（更远）
+  const baseCloses = Array.from({ length: 40 }, (_, i) => 96 + i * 0.1) // 涨到 ~99.9
+  const lowVol = computeTradingSignal(makeKline(baseCloses, 0.005), 100)
+  const highVol = computeTradingSignal(makeKline(baseCloses, 0.04), 100)
+  asserts.push([
+    '高波动止损比低波动更宽（跟波动率走）',
+    lowVol !== null && highVol !== null && highVol.stopLoss < lowVol.stopLoss,
+  ])
+
   let pass = true
   for (const [name, ok] of asserts) {
     console.log(`  ${ok ? '✅' : '❌'} ${name}`)
@@ -77,8 +90,18 @@ async function main() {
       }))
       const sig2 = computeTradingSignal(kline)
       if (sig2) {
+        const atrVal = lastValid(
+          atr(
+            kline.map((k) => k.high),
+            kline.map((k) => k.low),
+            kline.map((k) => k.close),
+            14,
+          ),
+        )
+        const stopDist = ((sig2.currentPrice - sig2.stopLoss) / sig2.currentPrice) * 100
         console.log(`  贵州茅台 现价 ${sig2.currentPrice}`)
         console.log(`  买入 ${sig2.buyLow}~${sig2.buyHigh}  止盈 ${sig2.takeProfit}  止损 ${sig2.stopLoss}  RR ${sig2.riskReward}`)
+        console.log(`  ATR(14)=${atrVal?.toFixed(2) ?? '—'}  止损距离 ${stopDist.toFixed(1)}%`)
         console.log(`  理由: ${sig2.reasons.join(' | ')}`)
       } else {
         console.log('  ⚠ 真实数据信号为 null')

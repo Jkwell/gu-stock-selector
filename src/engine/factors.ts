@@ -24,6 +24,7 @@ export interface ScoringInput {
   financials?: Financials
   moneyFlow?: MoneyFlow
   moneyFlowHistory?: number[] // 近 N 日主力净流入（资金趋势）
+  fundConcentration?: import('../engine/quickRules').FundConcentration
 }
 
 const clamp = (v: number, lo = 0, hi = 100) =>
@@ -106,39 +107,43 @@ function computeTechnicalRaw(kline: Kline[], limitUpThreshold: number): Technica
     return above20 * 0.35 + above60 * 0.35 + maBull * 0.2 + ma20Turn * 1.5
   })()
 
-  // MACD：柱相对价格强度 + 金叉死叉方向
+  // MACD：更严格的区分度
   const macdRaw = (() => {
     if (difLast === undefined || deaLast === undefined || histLast === undefined) return null
     const histRatio = (histLast / close[n - 1]) * 100
-    let v = 50 + histRatio * 120
-    if (histLast > 0 && histPrev <= 0) v += 20 // 柱由负转正（金叉确认）
-    if (histLast < 0 && histPrev >= 0) v -= 20 // 柱由正转负（死叉确认）
+    let v = histRatio <= 0 ? 40 + histRatio * 50 : 40 + Math.sqrt(histRatio) * 22
+    if (histLast > 0 && histPrev <= 0) v += 15
+    if (histLast < 0 && histPrev >= 0) v -= 15
     if (difLast > deaLast) v += 5
     return clamp(v, 5, 100)
   })()
 
-  // RSI：健康区间高分，超买超卖低分
+  // RSI：更严格的区分度
   const rsiScore = (() => {
     if (rsiLast === null) return null
     const r = rsiLast
-    if (r >= 45 && r <= 60) return 100
-    if (r >= 35 && r < 45) return 88
-    if (r > 60 && r <= 70) return 78
-    if (r >= 25 && r < 35) return 58
-    if (r > 70 && r <= 75) return 45
-    return 25 // r<25 或 r>75
+    if (r < 30) return 20
+    if (r < 40) return 40
+    if (r < 50) return 60
+    if (r < 60) return 80
+    if (r < 70) return 90
+    if (r < 80) return 70
+    if (r < 90) return 40
+    return 20
   })()
 
-  // 成交量异动：量比 1.2~2.5 温和放量高分
+  // 成交量异动：更严格的区分度
   const volumeScore = (() => {
     if (!vol20 || vol20 === 0) return null
     const ratio = volLast / vol20
-    if (ratio <= 0.6) return 30
-    if (ratio <= 1.2) return 60
-    if (ratio <= 1.5) return 75
-    if (ratio <= 2.5) return 90
-    if (ratio <= 4) return 68
-    return 40
+    if (ratio <= 0.5) return 20
+    if (ratio <= 0.8) return 35
+    if (ratio <= 1.0) return 50
+    if (ratio <= 1.3) return 70
+    if (ratio <= 2.0) return 85
+    if (ratio <= 3.0) return 60
+    if (ratio <= 5.0) return 40
+    return 25
   })()
 
   // 动量（1月）：过去 20 个交易日涨幅
@@ -255,6 +260,20 @@ function tierScore(
   return 0
 }
 
+/**
+ * 动量过热钳制打分：
+ *  - 涨幅 0 ~ peak：线性升到满分（动量有效区）
+ *  - 越过 peak：每超过一个 peak 长度降 30 分，防止追顶（周五涨最猛的妖股不再满分）
+ *  - 下跌段：保持原有灵敏度（跌得越多分越低）
+ */
+function momentumOverheatScore(raw: number, peak: number): number {
+  if (raw <= -0.1) return clamp(30 + raw * 100, 0, 30)
+  if (raw <= 0) return clamp(30 + raw * 200, 30, 50)
+  if (raw <= peak) return clamp(50 + (raw / peak) * 40, 50, 90)
+  if (raw <= peak * 2) return clamp(90 - ((raw - peak) / peak) * 20, 70, 90)
+  return clamp(70 - ((raw - peak * 2) / peak) * 30, 30, 70)
+}
+
 /** 主打分函数：给定一批股票与配置，返回排序后的评分结果 */
 export function scoreStocks(
   inputs: ScoringInput[],
@@ -323,7 +342,18 @@ export function scoreStocks(
         case 'trend': {
           rawValue = tech.trend
           if (rawValue !== null) {
-            score = clamp(50 + rawValue * 900, 5, 100)
+            // 更严格的区分度：负分线性下降，正分缓慢上升
+            if (rawValue < -0.1) {
+              score = clamp(30 + rawValue * 100, 5, 30)
+            } else if (rawValue < 0) {
+              score = clamp(30 + rawValue * 200, 30, 50)
+            } else if (rawValue < 0.15) {
+              score = clamp(50 + rawValue * 200, 50, 80)
+            } else if (rawValue < 0.3) {
+              score = clamp(80 + (rawValue - 0.15) * 66, 80, 90)
+            } else {
+              score = clamp(90 + (rawValue - 0.3) * 50, 90, 100)
+            }
             detail = `高于20日线 ${(rawValue * 100).toFixed(2)}% 综合`
           }
           break
@@ -349,7 +379,7 @@ export function scoreStocks(
         case 'momentum_1m': {
           rawValue = tech.momentum_1m
           if (rawValue !== null) {
-            score = clamp(50 + rawValue * 400, 5, 100)
+            score = momentumOverheatScore(rawValue, 0.15)
             detail = `近1月涨幅 ${(rawValue * 100).toFixed(2)}%`
           }
           break
@@ -357,7 +387,7 @@ export function scoreStocks(
         case 'momentum_3m': {
           rawValue = tech.momentum_3m
           if (rawValue !== null) {
-            score = clamp(50 + rawValue * 250, 5, 100)
+            score = momentumOverheatScore(rawValue, 0.3)
             detail = `近3月涨幅 ${(rawValue * 100).toFixed(2)}%`
           }
           break
@@ -365,7 +395,7 @@ export function scoreStocks(
         case 'short_momentum': {
           rawValue = tech.short_momentum
           if (rawValue !== null) {
-            score = clamp(50 + rawValue * 300, 5, 100)
+            score = momentumOverheatScore(rawValue, 0.15)
             detail = `近3日涨幅 ${(rawValue * 100).toFixed(2)}%`
           }
           break
@@ -534,7 +564,23 @@ export function scoreStocks(
     const coverage = weightSum > 0 ? availSum / weightSum : 0
     // 缺失因子不再被完全重新归一化掩盖，覆盖率低于 80% 时按比例降分。
     const coveragePenalty = coverage >= 0.8 ? 1 : coverage / 0.8
-    const total = rawTotal * coveragePenalty
+
+    // 通用高位风控（不依赖 limit_up 因子是否启用）：
+    // 5 连板及以上，或 近20日涨幅>50% 且放量 → 标记高位风险并降分（不只警告）
+    let total = rawTotal * coveragePenalty
+    if (!highRiskFlag) {
+      const lu = tech.limit_up
+      if (lu !== null && lu >= 5) {
+        highRiskFlag = true
+      } else if (
+        tech.momentum_1m !== null &&
+        tech.momentum_1m > 0.5 &&
+        (tech.volume ?? 0) >= 85
+      ) {
+        highRiskFlag = true
+      }
+    }
+    if (highRiskFlag) total *= 0.7
 
     results.push({
       code: input.info.code,
@@ -547,6 +593,11 @@ export function scoreStocks(
       dataCoverage: Number(coverage.toFixed(3)),
       price: input.info.price,
       changePct: input.info.changePct,
+      totalMv: input.info.totalMv,
+      floatMv: input.info.floatMv,
+      pe: input.info.pe,
+      pb: input.info.pb,
+      turnoverRate: input.info.turnoverRate,
       factorScores,
     })
   }

@@ -12,9 +12,12 @@ import { diversifyPortfolio } from '../engine/portfolio'
 import {
   computeTradingSignal,
   isOneWordLimitUp,
+  analyzeStabilization,
+  computeBuyScore,
 } from '../engine/tradingSignals'
+import type { TradingSignalBrief } from '../types'
 import { pickConceptLeaders } from '../engine/conceptLeader'
-import { filterByQuickRules, filterByVolumeRatio, isUptrend } from '../engine/quickRules'
+import { filterByQuickRules, scoreGentleVolume, computeFundConcentration, type VolumeScoreResult } from '../engine/quickRules'
 import type { FactorDef } from '../types'
 import {
   fetchFinancials,
@@ -427,6 +430,19 @@ export async function runSelection(
 ): Promise<SelectionResult> {
   const onProgress = opts.onProgress ?? (() => {})
   const concurrency = opts.concurrency ?? 8
+
+  // 检测是否为温和放量策略（启用因子匹配）
+  const enabledKeys = new Set(config.factors.filter((f) => f.enabled).map((f) => f.key))
+  const isGentleVolume =
+    enabledKeys.size >= 7 &&
+    ['volume', 'moneyflow', 'trend', 'macd', 'rsi', 'momentum_1m', 'short_momentum'].every((k) => enabledKeys.has(k))
+
+  // 温和放量走打分制流程
+  if (isGentleVolume) {
+    return runGentleVolumeSelection(config, opts, onProgress, concurrency)
+  }
+
+  // ---- 通用流程 ----
   const { inputs, totalScanned, skipped } = await loadScoringInputs(
     config,
     onProgress,
@@ -436,6 +452,8 @@ export async function runSelection(
   // ---- 打分（Web Worker 后台执行）----
   onProgress({ stage: 'scoring', done: 0, total: 1, message: '多因子打分…' })
   let scored: StockScore[] = await scoreWithWorker(inputs, config.factors)
+  // 用候选池已有的 K 线预算买卖点（详情弹窗会自行拉更多 K 线重算，此处给结果表一个快速参考）
+  attachSignalsFromInputs(scored, inputs, config)
   // 组合优化：行业分散
   if (config.diversify) {
     scored = diversifyPortfolio(scored, config.maxPerIndustry)
@@ -455,6 +473,173 @@ export async function runSelection(
     skipped,
     computedAt: new Date().toISOString(),
   }
+}
+
+/**
+ * 温和放量打分制选股（选股页和今日推荐共用）
+ */
+async function runGentleVolumeSelection(
+  config: SelectConfig,
+  _opts: RunOptions,
+  onProgress: (p: PipelineProgress) => void,
+  concurrency: number,
+): Promise<SelectionResult> {
+  const { scored: scoredStocks, totalScanned, skipped } = await gentleVolumeScoring(
+    config, onProgress, concurrency,
+  )
+
+  onProgress({ stage: 'done', done: 1, total: 1, message: `完成，共 ${scoredStocks.length} 只入选` })
+
+  return {
+    config,
+    scored: scoredStocks,
+    totalScanned,
+    skipped,
+    computedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * 温和放量打分制统一实现（选股页与今日推荐共用）
+ * 统一 minTotalScore = 40，资金分使用真实流通市值
+ */
+async function gentleVolumeScoring(
+  config: SelectConfig,
+  onProgress: (p: PipelineProgress) => void,
+  concurrency: number,
+): Promise<{ scored: StockScore[]; totalScanned: number; skipped: number }> {
+  onProgress({ stage: 'list', done: 0, total: 1, message: '全市场评分筛选…' })
+  const market = await fetchMarketStocks()
+  const eligible = filterBySelectionConfig(market, config)
+  const quickFiltered = filterByQuickRules(eligible)
+  onProgress({ stage: 'list', done: 1, total: 1, message: `粗筛后 ${quickFiltered.length} 只，评分中…` })
+  const requireTrend = config.requireUptrend !== false
+  const floatMvOf = new Map<string, number>()
+  for (const s of quickFiltered) {
+    if (s.code && s.floatMv && s.floatMv > 0) floatMvOf.set(s.code, s.floatMv)
+  }
+
+  // 1. 拉K线 + 打分
+  const scored: { input: ScoringInput; score: VolumeScoreResult }[] = []
+  let checked = 0
+  await mapLimit(quickFiltered, concurrency, async (s) => {
+    let kline: Kline[] = []
+    try {
+      kline = await fetchKline(s.market, s.code, 200)
+    } catch {
+      kline = []
+    }
+    checked++
+    if (kline.length >= 200) {
+      const volScore = scoreGentleVolume(kline, null, requireTrend, floatMvOf.get(s.code))
+      scored.push({ input: { info: s, kline }, score: volScore })
+    }
+    if (checked % 100 === 0 || checked === quickFiltered.length) {
+      onProgress({ stage: 'list', done: checked, total: quickFiltered.length, message: `量能/趋势评分 ${checked}/${quickFiltered.length}…` })
+    }
+  })
+
+  // 2. 过滤掉总分过低的（统一阈值 40）
+  const minTotalScore = 40
+  const viable = scored.filter((item) => item.score.totalScore >= minTotalScore)
+
+  // 3. 补充资金流数据 + 5日历史，重新算总分（多周期确认）
+  let moneyDone = 0
+  await mapLimit(viable, concurrency, async (item) => {
+    let moneyFlow = await moneyflowCache.get(item.input.info.code)
+    if (!moneyFlow) {
+      try {
+        moneyFlow = await fetchMoneyFlow(item.input.info.market, item.input.info.code)
+      } catch {
+        moneyFlow = null
+      }
+      if (moneyFlow) await moneyflowCache.set(item.input.info.code, moneyFlow)
+    }
+    if (moneyFlow) {
+      item.input.moneyFlow = moneyFlow
+      // 资金集中度
+      item.input.fundConcentration = computeFundConcentration(moneyFlow) ?? undefined
+      // 拉近5日资金历史（多周期确认）
+      let history: number[] | undefined
+      try {
+        const hist = await fetchMoneyFlowHistory(item.input.info.market, item.input.info.code, 5)
+        if (hist.length > 0) {
+          item.input.moneyFlowHistory = hist
+          history = hist
+        }
+      } catch {
+        history = undefined
+      }
+      item.score = scoreGentleVolume(
+        item.input.kline,
+        moneyFlow.mainNetInflow,
+        requireTrend,
+        floatMvOf.get(item.input.info.code),
+        history,
+      )
+    }
+    moneyDone++
+    if (moneyDone % 50 === 0 || moneyDone === viable.length) {
+      onProgress({ stage: 'moneyflow', done: moneyDone, total: viable.length, message: `补充资金流 ${moneyDone}/${viable.length}…` })
+    }
+  })
+
+  // 4. 按总分排序，取前 N
+  const sorted = viable.sort((a, b) => b.score.totalScore - a.score.totalScore)
+  const fundInflow = sorted.slice(0, config.maxResults * 3).map((item) => item.input)
+
+  // 5. 多因子评分
+  onProgress({ stage: 'scoring', done: 0, total: 1, message: '温和放量因子评分…' })
+  let scoredStocks = await scoreWithWorker(fundInflow, config.factors)
+
+  // 6. 近3日资金流验证排序
+  const historyCandidates = scoredStocks.slice(0, 24)
+  const strictFlowCodes = new Set<string>()
+  let historyDone = 0
+  await mapLimit(historyCandidates, Math.min(concurrency, 4), async (candidate) => {
+    const input = fundInflow.find((item) => item.info.code === candidate.code)
+    if (input) {
+      try {
+        const history = await fetchMoneyFlowHistory(input.info.market, input.info.code, 3)
+        input.moneyFlowHistory = history
+        if (history.reduce((sum, value) => sum + value, 0) > 0) {
+          strictFlowCodes.add(candidate.code)
+        }
+      } catch {}
+    }
+    historyDone++
+    if (historyDone % 8 === 0 || historyDone === historyCandidates.length) {
+      onProgress({ stage: 'moneyflow', done: historyDone, total: historyCandidates.length, message: `验证 3 日资金 ${historyDone}/${historyCandidates.length}…` })
+    }
+  })
+  const flowPrioritized = [
+    ...scoredStocks.filter((candidate) => strictFlowCodes.has(candidate.code)),
+    ...scoredStocks.filter((candidate) => !strictFlowCodes.has(candidate.code)),
+  ]
+  scoredStocks = diversifyPortfolio(flowPrioritized, config.maxPerIndustry)
+  scoredStocks = scoredStocks.slice(0, config.maxResults)
+
+  // 用候选池已有的 K 线预算买卖点（详情弹窗会自行拉更多 K 线重算）
+  attachSignalsFromInputs(scoredStocks, fundInflow, config)
+
+  // 板块内相对强度
+  const sectorStrengthMap = computeSectorStrength(scoredStocks, market)
+  for (const s of scoredStocks) {
+    s.sectorStrength = sectorStrengthMap.get(s.code) ?? undefined
+  }
+
+  // 资金集中度相对排名（在候选池内分三等）
+  const withConc = scoredStocks.filter((s) => s.fundConcentration)
+  withConc.sort((a, b) => (b.fundConcentration!.ratio) - (a.fundConcentration!.ratio))
+  const n = withConc.length
+  withConc.forEach((s, i) => {
+    const pct = i / n
+    if (pct < 0.33) s.fundConcentration!.level = 'high'
+    else if (pct < 0.67) s.fundConcentration!.level = 'medium'
+    else s.fundConcentration!.level = 'low'
+  })
+
+  return { scored: scoredStocks, totalScanned: quickFiltered.length, skipped: quickFiltered.length - viable.length }
 }
 
 /**
@@ -487,115 +672,48 @@ export async function runDailyPick(
   const isConceptLeader =
     enabledKeys.size === 4 &&
     ['short_momentum', 'breakout', 'volume', 'moneyflow'].every((k) => enabledKeys.has(k))
-  // 温和放量模板：volume + short_momentum + moneyflow + trend + macd
+  // 温和放量模板：volume + moneyflow + trend + macd + rsi + momentum_1m + short_momentum
   const isGentleVolume =
-    enabledKeys.size === 5 &&
-    ['volume', 'short_momentum', 'moneyflow', 'trend', 'macd'].every((k) => enabledKeys.has(k))
+    enabledKeys.size >= 7 &&
+    ['volume', 'moneyflow', 'trend', 'macd', 'rsi', 'momentum_1m', 'short_momentum'].every((k) => enabledKeys.has(k))
 
   let topCandidates: StockScore[]
   if (isGentleVolume) {
-    // 温和放量规则：基础过滤 → 量比/趋势硬筛 → 完整五因子评分 → Top 4
-    onProgress({ stage: 'list', done: 0, total: 1, message: '应用量比/换手筛选…' })
-    const market = marketSnapshot ?? await fetchMarketStocks()
-    const eligible = filterBySelectionConfig(market, pickConfig)
-    // 先按样例页的价格、估值、换手和涨跌幅规则粗筛；再混合高换手、趋势和动量来源取 500 只，
-    // 避免只偏向题材高换手股，也避免对全市场逐只拉 K 线和资金流。
-    const quickFiltered = selectCandidatePool(
-      filterByQuickRules(eligible),
-      pickConfig,
-      true,
-    )
-    onProgress({ stage: 'list', done: 1, total: 1, message: `快筛后 ${quickFiltered.length} 只，算量比…` })
-    const requireTrend = pickConfig.requireUptrend !== false // 默认要求上升趋势
-    const qualified: ScoringInput[] = []
-    let checked = 0
-    await mapLimit(quickFiltered, concurrency, async (s) => {
-      let kline: Kline[] = []
-      try {
-        kline = await fetchKline(s.market, s.code, 70) // 需要 60+ 根判断趋势
-      } catch {
-        kline = []
-      }
-      // 博主规则①：温和放量；规则②：上升趋势（可选开关，拒绝抄底低位）
-      if (
-        kline.length >= 70 &&
-        filterByVolumeRatio(kline) &&
-        (!requireTrend || isUptrend(kline))
-      ) {
-        qualified.push({ info: s, kline })
-      }
-      checked++
-      if (checked % 50 === 0 || checked === quickFiltered.length) {
-        onProgress({
-          stage: 'list',
-          done: checked,
-          total: quickFiltered.length,
-          message: `量比/趋势筛选 ${checked}/${quickFiltered.length}…`,
-        })
-      }
-    })
-    // 参考样例页：主力净流入必须为正；没有资金流数据不进入最终排序。
-    let moneyDone = 0
-    await mapLimit(qualified, concurrency, async (input) => {
-      let moneyFlow = await moneyflowCache.get(input.info.code)
-      if (!moneyFlow) {
-        try {
-          moneyFlow = await fetchMoneyFlow(input.info.market, input.info.code)
-        } catch {
-          moneyFlow = null
-        }
-        if (moneyFlow) await moneyflowCache.set(input.info.code, moneyFlow)
-      }
-      if (moneyFlow) input.moneyFlow = moneyFlow
-      moneyDone++
-      if (moneyDone % 25 === 0 || moneyDone === qualified.length) {
-        onProgress({ stage: 'moneyflow', done: moneyDone, total: qualified.length, message: `补充资金流 ${moneyDone}/${qualified.length}…` })
-      }
-    })
-    const fundInflow = qualified.filter((input) => (input.moneyFlow?.mainNetInflow ?? 0) > 0)
-    onProgress({ stage: 'scoring', done: 0, total: 1, message: '温和放量因子评分…' })
-    let scored = await scoreWithWorker(fundInflow, pickConfig.factors)
-
-    // 单日资金流容易受盘中大单扰动。仅核验评分靠前的候选，近 3 日累计为正者优先；
-    // 数量不足时仍回退到当日净流入为正的标的，避免弱市时完全没有可跟踪对象。
-    const historyCandidates = scored.slice(0, 24)
-    const strictFlowCodes = new Set<string>()
-    let historyDone = 0
-    await mapLimit(historyCandidates, Math.min(concurrency, 4), async (candidate) => {
-      const input = fundInflow.find((item) => item.info.code === candidate.code)
-      if (input) {
-        try {
-          const history = await fetchMoneyFlowHistory(input.info.market, input.info.code, 3)
-          input.moneyFlowHistory = history
-          if (history.reduce((sum, value) => sum + value, 0) > 0) {
-            strictFlowCodes.add(candidate.code)
-          }
-        } catch {
-          // 历史资金流不可用时，保留当日主力净流入为正的后备资格。
-        }
-      }
-      historyDone++
-      if (historyDone % 8 === 0 || historyDone === historyCandidates.length) {
-        onProgress({
-          stage: 'moneyflow',
-          done: historyDone,
-          total: historyCandidates.length,
-          message: `验证 3 日资金 ${historyDone}/${historyCandidates.length}…`,
-        })
-      }
-    })
-    const flowPrioritized = [
-      ...scored.filter((candidate) => strictFlowCodes.has(candidate.code)),
-      ...scored.filter((candidate) => !strictFlowCodes.has(candidate.code)),
-    ]
-    scored = diversifyPortfolio(flowPrioritized, pickConfig.maxPerIndustry)
-    topCandidates = scored.slice(0, 12)
+    // 温和放量：复用统一的打分制实现
+    const { scored } = await gentleVolumeScoring(pickConfig, onProgress, concurrency)
+    topCandidates = scored
   } else if (isConceptLeader) {
     onProgress({ stage: 'list', done: 0, total: 1, message: '分析热点概念题材…' })
     const market = marketSnapshot ?? await fetchMarketStocks()
     const eligible = filterBySelectionConfig(market, pickConfig)
-    const leaders = pickConceptLeaders(eligible, 12) // 先取候选，后续再按可成交性补足 Top 4
-    topCandidates = leaders.slice(0, 12).map((s, i) => ({
+    // 粗筛候选 → 补 K 线 / 资金流 → 精排（低位首板优先、高位连板降级、资金确认）
+    let leadersDone = 0
+    const picks = await pickConceptLeaders(eligible, 12, {
+      topK: 40,
+      enrich: async (s) => {
+        let kline: Kline[] = []
+        try {
+          kline = await fetchKline(s.market, s.code, 160)
+        } catch {
+          kline = []
+        }
+        let moneyFlow = await moneyflowCache.get(s.code)
+        if (!moneyFlow) {
+          try {
+            moneyFlow = await fetchMoneyFlow(s.market, s.code)
+          } catch {
+            moneyFlow = null
+          }
+          if (moneyFlow) await moneyflowCache.set(s.code, moneyFlow)
+        }
+        leadersDone++
+        if (leadersDone % 10 === 0) {
+          onProgress({ stage: 'kline', done: leadersDone, total: 40, message: `分析龙头候选 ${leadersDone}/40…` })
+        }
+        return { kline, moneyFlow: moneyFlow ?? undefined }
+      },
+    })
+    topCandidates = picks.slice(0, 12).map(({ stock: s, highRisk, reasons }, i) => ({
       code: s.code,
       name: s.name,
       market: s.market,
@@ -604,6 +722,7 @@ export async function runDailyPick(
       totalScore: 100 - i * 5, // 龙头排序分数（仅展示）
       price: s.price,
       changePct: s.changePct,
+      highRisk,
       factorScores: [
         {
           key: 'concept',
@@ -612,7 +731,10 @@ export async function runDailyPick(
           rawValue: s.changePct ?? 0,
           score: Math.min(100, (s.changePct ?? 0) * 5 + 50),
           weight: 1,
-          detail: `题材龙头 · 今日涨幅 ${(s.changePct ?? 0).toFixed(2)}%`,
+          detail:
+            reasons.length > 0
+              ? `题材龙头 · 今日涨幅 ${(s.changePct ?? 0).toFixed(2)}% · ${reasons.join('，')}`
+              : `题材龙头 · 今日涨幅 ${(s.changePct ?? 0).toFixed(2)}%`,
         },
       ],
     }))
@@ -667,6 +789,11 @@ export async function runDailyPick(
             factorScores: s.factorScores,
             price: signal.currentPrice,
             changePct: changePct !== undefined ? Number(changePct.toFixed(2)) : undefined,
+            totalMv: s.totalMv,
+            floatMv: s.floatMv,
+            pe: s.pe,
+            pb: s.pb,
+            turnoverRate: s.turnoverRate,
             buyLow: signal.buyLow,
             buyHigh: signal.buyHigh,
             takeProfit: signal.takeProfit,
@@ -697,4 +824,91 @@ export async function runDailyPick(
     isTailPeriod,
     gateReason: tradeFilterWarning,
   }
+}
+
+/** 短线模式识别：含短线爆发/创新高等短线因子时，用 MA5 回踩更敏感 */
+function isShortMode(config: SelectConfig): boolean {
+  return config.factors.some(
+    (f) => f.enabled && (f.key === 'short_momentum' || f.key === 'breakout' || f.key === 'limit_up'),
+  )
+}
+
+/** 用打分前已有的候选池 K 线，给每只入选股票附上买卖点摘要 */
+function attachSignalsFromInputs(
+  scored: StockScore[],
+  inputs: ScoringInput[],
+  config: SelectConfig,
+): void {
+  if (scored.length === 0) return
+  const shortMode = isShortMode(config)
+  const klineByCode = new Map(inputs.map((inp) => [inp.info.code, inp.kline]))
+  const concByCode = new Map(inputs.map((inp) => [inp.info.code, inp.fundConcentration]))
+  for (const s of scored) {
+    const kline = klineByCode.get(s.code)
+    if (!kline || kline.length < 30) continue
+    const sig = computeTradingSignal(kline, s.price, shortMode)
+    if (!sig) continue
+    const brief: TradingSignalBrief = {
+      buyLow: sig.buyLow,
+      buyHigh: sig.buyHigh,
+      takeProfit: sig.takeProfit,
+      stopLoss: sig.stopLoss,
+      riskReward: sig.riskReward,
+      shortMode,
+    }
+    s.signal = brief
+    // 附带企稳评分 + 买入决策评分（与详情页共用同一算法）
+    const stab = analyzeStabilization(kline)
+    if (stab) {
+      s.stabilityScore = stab.verdict.score
+      s.buyScore = computeBuyScore(stab, sig.riskReward)
+    }
+    // 附带资金集中度
+    s.fundConcentration = concByCode.get(s.code) ?? undefined
+  }
+}
+
+/** 计算板块内相对强度 */
+function computeSectorStrength(
+  scored: StockScore[],
+  market: StockInfo[],
+): Map<string, { vsSector: number; rank: number; total: number; isLeader: boolean }> {
+  // 按行业分组，算各行业平均5日涨幅
+  const sectorReturns = new Map<string, { sum: number; count: number }>()
+  for (const s of market) {
+    if (!s.industry || s.changePct === undefined) continue
+    const r = sectorReturns.get(s.industry) ?? { sum: 0, count: 0 }
+    r.sum += s.changePct
+    r.count++
+    sectorReturns.set(s.industry, r)
+  }
+  const sectorAvg = new Map<string, number>()
+  for (const [ind, r] of sectorReturns) {
+    if (r.count > 0) sectorAvg.set(ind, r.sum / r.count)
+  }
+
+  // 按行业分组，算排名（按总分排序）
+  const sectorGroups = new Map<string, StockScore[]>()
+  for (const s of scored) {
+    const ind = s.industry ?? '未知'
+    if (!sectorGroups.has(ind)) sectorGroups.set(ind, [])
+    sectorGroups.get(ind)!.push(s)
+  }
+
+  const result = new Map<string, { vsSector: number; rank: number; total: number; isLeader: boolean }>()
+  for (const s of scored) {
+    const ind = s.industry ?? '未知'
+    const avg = sectorAvg.get(ind) ?? 0
+    const vsSector = (s.changePct ?? 0) - avg
+    const peers = sectorGroups.get(ind) ?? []
+    const sorted = [...peers].sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0))
+    const rank = sorted.findIndex((p) => p.code === s.code) + 1
+    result.set(s.code, {
+      vsSector: Number(vsSector.toFixed(2)),
+      rank,
+      total: peers.length,
+      isLeader: rank > 0 && rank <= Math.max(1, Math.ceil(peers.length * 0.3)),
+    })
+  }
+  return result
 }

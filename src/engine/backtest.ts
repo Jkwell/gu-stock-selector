@@ -1,5 +1,6 @@
 import type { FactorDef, Kline } from '../types'
 import { buildTechnicalCalculators } from './rawFactors'
+import { calcVolumeRatio, isUptrend } from './quickRules'
 
 /**
  * 简易回测引擎
@@ -18,11 +19,14 @@ export interface BacktestConfig {
   factors: FactorDef[] // 技术因子配置
   /** 交易成本率（买卖双向合计，默认 0.0015 = 万2.5佣金 + 千1印花税 + 万2.5滑点） */
   costRate?: number
+  /** 温和放量模式：模拟实盘打分制的硬性趋势/量能要求（仅选上升趋势 + 量比≥0.8 的票） */
+  gentleVolume?: boolean
 }
 
 export interface BacktestTrade {
   rebalanceDate: string
   codes: string[] // 本期持仓代码
+  names: string[] // 本期持仓名称（与 codes 对应）
   periodReturn: number // 本期组合收益（%）
   benchmarkReturn: number // 本期基准收益（%）
 }
@@ -86,7 +90,7 @@ function emptyResult(
 
 /** 运行回测 */
 export function runBacktest(
-  stocks: Array<{ code: string; kline: Kline[] }>,
+  stocks: Array<{ code: string; name?: string; kline: Kline[] }>,
   config: BacktestConfig,
 ): BacktestResult {
   const costRate = config.costRate ?? 0.0015
@@ -179,8 +183,21 @@ export function runBacktest(
       const chg = cur / prev - 1
       return !(chg >= 0.098 && cur >= hi * 0.995)
     })
-    excludedCount += ranked.length - buyable.length
-    const picked = buyable.slice(0, config.topN).map(([si]) => si)
+    // 温和放量模式：模拟实盘打分制的趋势/量能硬性要求
+    let gentleFiltered = buyable
+    if (config.gentleVolume) {
+      gentleFiltered = buyable.filter(([si]) => {
+        // 取调仓日为止的 K 线切片（需足够长度判断趋势）
+        const idx = d
+        const ks = stocks[si].kline.filter((k) => k.date <= dates[idx])
+        if (ks.length < 70) return false
+        if (!isUptrend(ks)) return false
+        const ratio = calcVolumeRatio(ks)
+        return ratio !== null && ratio >= 0.8
+      })
+    }
+    excludedCount += ranked.length - gentleFiltered.length
+    const picked = gentleFiltered.slice(0, config.topN).map(([si]) => si)
     const nextHoldings = new Set(picked)
 
     // costRate 是买卖双向合计成本；仅新增仓位时按半个往返成本计。
@@ -195,6 +212,7 @@ export function runBacktest(
     trades.push({
       rebalanceDate: dates[d],
       codes: picked.map((si) => stocks[si].code),
+      names: picked.map((si) => stocks[si].name || stocks[si].code),
       periodReturn: 0,
       benchmarkReturn: 0,
     })

@@ -14,6 +14,8 @@ export default function KLineChart({ kline, height = 420 }: Props) {
   const ma5 = sma(close, 5)
   const ma20 = sma(close, 20)
 
+  const fmtMa = (arr: (number | null)[]) => arr.map((v) => (v !== null ? Number(v.toFixed(2)) : null))
+
   const dates = kline.map((k) => k.date)
   const candles = kline.map((k) => [k.open, k.close, k.low, k.high])
   const volumes = kline.map((k) => ({
@@ -32,6 +34,21 @@ export default function KLineChart({ kline, height = 420 }: Props) {
       backgroundColor: 'rgba(255,255,255,0.95)',
       borderColor: '#ddd',
       textStyle: { color: '#333', fontSize: 12 },
+      formatter: (params: any) => {
+        const date = params[0]?.axisValue ?? ''
+        let html = `<b>${date}</b>`
+        for (const p of params) {
+          if (p.seriesType === 'candlestick') {
+            const d = p.data
+            const chg = d[1] !== 0 ? ((d[2] - d[1]) / d[1] * 100) : 0
+            const chgStr = chg >= 0 ? `+${chg.toFixed(2)}%` : `${chg.toFixed(2)}%`
+            html += `<br/>开盘 ${d[1]} &nbsp; 收盘 ${d[2]} &nbsp; ${chgStr}<br/>最低 ${d[3]} &nbsp; 最高 ${d[4]}`
+          } else if (p.seriesType === 'line' && p.value != null) {
+            html += `<br/>${p.marker} ${p.seriesName} ${Number(p.value).toFixed(2)}`
+          }
+        }
+        return html
+      },
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     grid: [
@@ -81,7 +98,7 @@ export default function KLineChart({ kline, height = 420 }: Props) {
       {
         name: 'MA5',
         type: 'line',
-        data: ma5,
+        data: fmtMa(ma5),
         smooth: true,
         showSymbol: false,
         lineStyle: { width: 1, color: '#f59f00' },
@@ -89,7 +106,7 @@ export default function KLineChart({ kline, height = 420 }: Props) {
       {
         name: 'MA20',
         type: 'line',
-        data: ma20,
+        data: fmtMa(ma20),
         smooth: true,
         showSymbol: false,
         lineStyle: { width: 1, color: '#1971c2' },

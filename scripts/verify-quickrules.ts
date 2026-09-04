@@ -2,31 +2,29 @@
  * 温和放量规则（东财条件选股）验证
  * 运行：npx tsx scripts/verify-quickrules.ts
  */
-import { filterByQuickRules, calcVolumeRatio, filterByVolumeRatio } from '../src/engine/quickRules'
+import { filterByQuickRules, calcVolumeRatio } from '../src/engine/quickRules'
 import type { Kline, StockInfo } from '../src/types'
 
 const mk = (
   code: string,
   name: string,
   turnover: number,
-  changePct: number,
   price = 20,
-  pe = 30,
+  amount = 5e8,
   market: 'sh' | 'sz' = 'sh',
 ): StockInfo => ({
-  code, name, market, turnoverRate: turnover, changePct, price, pe,
+  code, name, market, turnoverRate: turnover, price, amount,
 })
 
-console.log('=== 1. 快照粗筛（换手/涨跌幅/剔除） ===')
+console.log('=== 1. 快照粗筛（价格/换手/成交额/剔除） ===')
 const stocks: StockInfo[] = [
-  mk('600001', '放量好票', 8, 3),             // ✅ 全部满足
-  mk('600002', '价格太低', 8, 3, 2),           // ❌ 价格<3
-  mk('600003', '换手太高', 21, 3),             // ❌ 换手>20
-  mk('600004', '涨幅太高', 8, 6.1),            // ❌ 涨跌>6
-  mk('600005', '估值太高', 8, 3, 20, 301),     // ❌ PE>300
-  mk('688001', '科创板股', 8, 3),              // ❌ 688
-  mk('600006', 'ST风险', 8, 3),                // ❌ ST
-  mk('830001', '北交所股', 8, 3, 20, 30, 'bj'), // ❌ 北交所
+  mk('600001', '放量好票', 8),                    // ✅ 全部满足
+  mk('600002', '价格太低', 8, 2),                  // ❌ 价格<3
+  mk('600003', '换手太高', 31),                    // ❌ 换手>30
+  mk('600004', '成交额太低', 8, 20, 1e6),          // ❌ 成交额<3000万
+  mk('688001', '科创板股', 8),                     // ❌ 688
+  mk('600006', 'ST风险', 8),                       // ❌ ST
+  mk('830001', '北交所股', 8, 20, 5e8, 'bj'),      // ❌ 北交所
 ]
 const filtered = filterByQuickRules(stocks)
 console.log(`  过滤后 ${filtered.length} 只（期望 1）:`, filtered.map((s) => s.name).join(', '))

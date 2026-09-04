@@ -29,104 +29,6 @@ const UA =
 // 内存缓存（push2 偶发限流时降级，股票列表变化不大）
 const memCache = new Map()
 
-// ── push2 镜像兜底：主源(实时)被封锁/限流时，自动切换到东财延迟镜像 push2delay（延迟约15分钟）──
-const MIRROR_RE = /push2(his)?\.eastmoney\.com/
-const PUSH2_PATHS = new Set(['/clist', '/fflow', '/fflow-history'])
-const makeFetchInit = () => ({
-  headers: {
-    'User-Agent': UA,
-    Referer: 'https://quote.eastmoney.com/',
-    Accept: 'application/json, text/plain, */*',
-  },
-  signal: AbortSignal.timeout(15000),
-})
-const toMirror = (u) => (MIRROR_RE.test(u) ? u.replace(MIRROR_RE, 'push2delay.eastmoney.com') : u)
-
-async function fetchUpstreamWithFallback(upstream, path) {
-  try {
-    const resp = await fetch(upstream, makeFetchInit())
-    // 上游返回 403/429/5xx（限流/封禁）时，push2 路由走延迟镜像重试
-    if (!resp.ok && PUSH2_PATHS.has(path)) {
-      const mirror = toMirror(upstream)
-      if (mirror !== upstream) {
-        console.warn(`[proxy] ${path} upstream HTTP ${resp.status}，切换到 push2delay 镜像重试`)
-        return await fetch(mirror, makeFetchInit())
-      }
-    }
-    return resp
-  } catch (err) {
-    // 连接失败（DNS/封锁/超时）时，push2 路由走延迟镜像重试
-    const mirror = toMirror(upstream)
-    if (mirror !== upstream) {
-      console.warn(`[proxy] ${path} upstream 连接失败，切换到 push2delay 镜像重试: ${String(err)}`)
-      return await fetch(mirror, makeFetchInit())
-    }
-    throw err
-  }
-}
-
-/** 东财历史日K（前复权，push2his 限流时切 push2delay 镜像），转腾讯 qfqday 行格式 [date,open,close,high,low,volume,amount] */
-async function fetchKlineFromEastmoney(market, code, lmt = 160) {
-  const secid = `${market === 'sh' ? '1' : '0'}.${code}`
-  const params = new URLSearchParams({
-    secid,
-    ut: 'fa5fd1943c7b386f172d6893dbfba10b',
-    klt: '101',
-    fqt: '1', // 前复权，与腾讯 qfq 对齐
-    lmt: String(lmt),
-    end: '20500101',
-    fields1: 'f1,f2,f3,f4,f5,f6',
-    fields2: 'f51,f52,f53,f54,f55,f56,f57',
-  })
-  const base = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-  for (const host of [base, toMirror(base)]) {
-    try {
-      const resp = await fetch(`${host}?${params.toString()}`, makeFetchInit())
-      if (!resp.ok) continue
-      const json = await resp.json()
-      const klines = json?.data?.klines
-      if (!Array.isArray(klines) || klines.length === 0) continue
-      return klines.map((line) => String(line).split(',').slice(0, 7))
-    } catch {
-      // 尝试下一个源
-    }
-  }
-  return null
-}
-
-/** 新浪日K（约前复权），转腾讯 qfqday 行格式 */
-async function fetchKlineFromSina(market, code, lmt = 160) {
-  const symbol = `${market === 'sh' ? 'sh' : market === 'bj' ? 'bj' : 'sz'}${code}`
-  const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=/CN_MarketDataService.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=${lmt}`
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        Referer: 'https://finance.sina.com.cn/',
-        Accept: '*/*',
-      },
-      signal: AbortSignal.timeout(12000),
-    })
-    if (!resp.ok) return null
-    const text = await resp.text()
-    const m = text.match(/\[[\s\S]*\]/)
-    if (!m) return null
-    const arr = JSON.parse(m[0])
-    if (!Array.isArray(arr) || arr.length === 0) return null
-    return arr.map((r) => [
-      r.day,
-      String(r.open),
-      String(r.close),
-      String(r.high),
-      String(r.low),
-      String(r.volume),
-      '0',
-    ])
-  } catch {
-    return null
-  }
-}
-
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
@@ -168,7 +70,6 @@ const server = http.createServer(async (req, res) => {
 
   try {
     let upstream
-    let klineMeta = null
 
     if (path === '/financials') {
       // 构造东方财富 datacenter 财务接口
@@ -206,7 +107,6 @@ const server = http.createServer(async (req, res) => {
       const prefix = market === 'sh' ? 'sh' : 'sz'
       const param = `${prefix}${code},day,,,${lmt},qfq`
       upstream = `${target}?param=${encodeURIComponent(param)}`
-      klineMeta = { market, code, key: `${prefix}${code}`, lmt: Number(lmt) || 160 }
     } else if (path === '/minute') {
       // 腾讯分时图：code=sh600519
       const code = url.searchParams.get('code') ?? ''
@@ -223,42 +123,16 @@ const server = http.createServer(async (req, res) => {
       upstream = `${target}?${url.searchParams.toString()}`
     }
 
-    const resp = await fetchUpstreamWithFallback(upstream, path)
+    const resp = await fetch(upstream, {
+      headers: {
+        'User-Agent': UA,
+        Referer: 'https://quote.eastmoney.com/',
+        Accept: 'application/json, text/plain, */*',
+      },
+      signal: AbortSignal.timeout(15000),
+    })
 
     const text = await resp.text()
-    // 腾讯日K源被 WAF/限流拦截（返回 501 跳转页/空数据）时，东财 push2his → 新浪 兜底。
-    // 统一转成腾讯结构 { data: { [key]: { qfqday: [[date,open,close,high,low,volume,amount]] } } }，
-    // 前端 fetchKline 解析逻辑无需改动。
-    if (path === '/kline' && klineMeta) {
-      let node = null
-      try {
-        node = JSON.parse(text)?.data?.[klineMeta.key]
-      } catch {
-        node = null
-      }
-      const rows = node?.qfqday ?? node?.day
-      if (!Array.isArray(rows) || rows.length === 0) {
-        const emRows = await fetchKlineFromEastmoney(
-          klineMeta.market,
-          klineMeta.code,
-          klineMeta.lmt,
-        )
-        const fallback =
-          emRows && emRows.length > 0
-            ? emRows
-            : await fetchKlineFromSina(klineMeta.market, klineMeta.code, klineMeta.lmt)
-        if (fallback && fallback.length > 0) {
-          console.warn(
-            `[proxy] /kline 腾讯源异常，${
-              emRows && emRows.length > 0 ? '东财' : '新浪'
-            }兜底 ${klineMeta.key} ${fallback.length} 根`,
-          )
-          res.writeHead(200, { ...corsHeaders(), 'Content-Type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ data: { [klineMeta.key]: { qfqday: fallback } } }))
-          return
-        }
-      }
-    }
     // 缓存 clist 响应（push2 偶发限流时降级）
     // 按完整请求参数区分，避免不同页/不同查询共用同一缓存
     if (path === '/clist' && resp.ok) {

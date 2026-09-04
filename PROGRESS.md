@@ -175,6 +175,16 @@ npm run dev        # 终端2：前端开发（http://localhost:5173）
 - [x] **git 代理配置**：`git config http.proxy http://127.0.0.1:7890`（Clash 本地代理，VPN 代理模式下 git 推送必须走它）
 - [x] 说明：公网站点数据直连可用；「🤖 AI 研报」Tab 依赖本地 FastAPI(8000)，公网站点上该 Tab 不可用（需自建后端托管）
 
+### 优化 v3.2（个股买卖点分析）
+- [x] **「🔍 个股分析」Tab**（`StockAnalysisPanel.tsx`）：输入股票代码 → 一键得出「现在能不能买、买点、卖点」
+- [x] **支持中文名搜索**：复用全市场快照建名称索引，输入中文名实时弹出联想下拉（精确→前缀→包含排序），模糊命中多个时弹下拉让用户选，避免自动乱选
+- [x] **个股分析引擎**（`engine/stockAnalysis.ts`）：6 项技术检查（趋势/MACD/RSI/量能/买点可及/风险回报）+ 综合评分 → 三档结论（✅适合买入 / ⏳观望等待 / ❌不建议买入）
+- [x] **买点/卖点**：复用 `tradingSignals` 引擎输出买入区间 + 止盈目标 + 止损价，叠加可视化价位条
+- [x] **特殊情形**：一字板买不进 ⛔、高位连板风险 🔴、已破止损 🔻 直接判"不适合买"
+- [x] **大盘情绪总闸门**：冰点时「适合买入」自动降级为「观望」，只降级不抬分
+- [x] **快捷选择**：今日推荐 + 监控列表一键带入；一键加入监控；附日 K 线图
+- [x] 验证：`npm run verify:stockanalysis` ✅（上升趋势→买 / 空头→回避 / 一字板→回避 / 高位连板→回避 / 冰点降级）
+
 ### 优化 v2.10（数据去重修复 + 生产构建验证）
 - [x] **proxy 缓存键修复**（`proxy/index.mjs`）：clist 缓存 key 加入完整 query 串（原单键缓存导致分页请求全部返回第 1 页 → 4100 条仅 100 个唯一代码 → 前 3 条结果重复）
 - [x] **fetchStockList 去重**（`api.ts`）：按代码 Set 去重，杜绝重复候选进池
@@ -199,6 +209,7 @@ npm run dev        # 终端2：前端开发（http://localhost:5173）
 | 量化规则 | `npm run verify:rules` | ✅ 粘合突破/大盘择时/高位预警 |
 | 仓位/资金 | `npm run verify:advice` | ✅ 仓位三级 + 资金趋势 |
 | 前端直连 | `npm run verify:direct` | ✅ 直连 K线/行情/财务（GBK解码正确） |
+| 个股分析 | `npm run verify:stockanalysis` | ✅ 买/观望/回避分级 + 买卖点结构 + 冰点降级 |
 | AI 后端健康 | `curl http://127.0.0.1:8000/health` | ✅ `{ok:true}` |
 | AI 分析流程 | `npm run ai-server` + curl POST | ✅ 单任务 409 闸门 + 12 阶段进度 + 管线跑到 LLM 调用；⏳ 真实评级返回待填 `DEEPSEEK_API_KEY` |
 | 类型检查 | `npx tsc --noEmit` | ✅ 通过 |
@@ -233,6 +244,7 @@ src/
 │   ├── marketTiming.ts  # 大盘择时（指数 vs MA20）
 │   ├── marketSentiment.ts # 市场情绪温度
 │   ├── positionAdvice.ts # 仓位建议
+│   ├── stockAnalysis.ts # 单只个股买卖点分析
 │   └── tradingSignals.ts # 买卖点计算
 ├── data/                # 数据层
 │   ├── api.ts           # 数据获取（本地代理/生产直连，自动切换）
@@ -252,6 +264,7 @@ src/
 │   ├── WatchlistPanel.tsx # 监控
 │   ├── PositionPanel.tsx # 持仓
 │   ├── ReviewPanel.tsx  # 复盘
+│   ├── StockAnalysisPanel.tsx # 个股买卖点分析
 │   ├── ICPanel.tsx      # 因子分析
 │   ├── BacktestPanel.tsx # 回测 + 多策略对比
 │   ├── StrategyGuideModal.tsx # 策略说明

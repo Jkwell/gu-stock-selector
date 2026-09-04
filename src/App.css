@@ -1,5 +1,5 @@
 .app {
-  max-width: 1200px;
+  max-width: 100%;
   margin: 0 auto;
   padding: 20px 16px 60px;
 }
@@ -19,24 +19,29 @@
 /* ---------- Tab 导航 ---------- */
 .tabs {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   margin-bottom: 16px;
   background: #fff;
   border-radius: 10px;
   padding: 6px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px #00000014;
   width: fit-content;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-btn {
-  padding: 8px 18px;
+  padding: 6px 12px;
   border: none;
   border-radius: 8px;
   background: transparent;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   color: #495057;
   transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tab-btn:hover {
@@ -382,18 +387,180 @@
   gap: 8px;
 }
 
-.table-wrap {
+/* 选股结果：板块筛选栏 */
+.result-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   background: #fff;
   border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  overflow: auto;
-  max-height: 70vh;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: #868e96;
+  white-space: nowrap;
+}
+
+.filter-group select {
+  padding: 4px 8px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #495057;
+  background: #fff;
+  cursor: pointer;
+  max-width: 160px;
+}
+
+.filter-group select:hover {
+  border-color: #1971c2;
+}
+
+.filter-clear {
+  background: none;
+  border: 1px solid #adb5bd;
+  border-radius: 6px;
+  color: #495057;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.filter-clear:hover {
+  border-color: #c92a2a;
+  color: #c92a2a;
+}
+
+.filter-count {
+  font-size: 12px;
+  color: #868e96;
+  margin-left: auto;
+}
+
+.update-time {
+  color: #868e96;
+}
+
+/* 资金集中度标签 */
+.fund-conc {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.fund-high {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.fund-medium {
+  background: #fff9db;
+  color: #e67700;
+}
+
+.fund-low {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+/* 板块强度 */
+.sector-strength {
+  font-size: 11px;
+  font-weight: 600;
+  color: #495057;
+}
+
+.sector-strength.leader {
+  color: #e67700;
+}
+
+/* 持仓页：行悬停高亮 */
+.position-row {
+  cursor: pointer;
+}
+
+.position-row:hover {
+  background: #e7f5ff;
+}
+
+.signal-hint {
+  font-size: 11px;
+  color: #868e96;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.signal-hint strong {
+  color: #495057;
+}
+
+.table-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部横向滚动条（与表格横向滚动同步） */
+.table-scrollbar-top {
+  overflow-x: scroll;
+  overflow-y: hidden;
+  height: 12px;
+  background: #f1f3f5;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.table-scrollbar-top-inner {
+  height: 1px;
+  width: 100%;
+}
+
+/* 滚动条跟随表格内容宽度：由 JS 动态同步，这里仅保证容器存在 */
+
+.table-wrap {
+  background: #fff;
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 68vh;
+}
+
+/* 隐藏表格自身的底部横向滚动条（改用顶部滚动条） */
+.table-wrap::-webkit-scrollbar {
+  width: 10px;
+  height: 0;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
+  background: #ced4da;
+  border-radius: 5px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover {
+  background: #adb5bd;
 }
 
 .result-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: auto;
 }
 
 .result-table th,
@@ -404,12 +571,46 @@
   white-space: nowrap;
 }
 
+/* 列宽优化：左列固定，数值列收紧 */
+.result-table th:nth-child(1),
+.result-table td:nth-child(1) {
+  width: 36px;
+}
+
+.result-table th:nth-child(2),
+.result-table td:nth-child(2) {
+  width: 74px;
+}
+
+.result-table th:nth-child(3),
+.result-table td:nth-child(3) {
+  width: 92px;
+}
+
+.result-table th:nth-child(4),
+.result-table td:nth-child(4) {
+  width: 72px;
+}
+
+.result-table th:nth-child(5),
+.result-table td:nth-child(5) {
+  width: 74px;
+}
+
+.result-table th:nth-child(6),
+.result-table td:nth-child(6) {
+  width: 64px;
+}
+
 .result-table th {
   position: sticky;
   top: 0;
-  background: #f8f9fa;
-  color: #495057;
-  font-weight: 600;
+  z-index: 2;
+  background: #f1f3f5;
+  color: #343a40;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: inset 0 -1px 0 #dee2e6;
 }
 
 .result-table td:nth-child(1),
@@ -424,6 +625,11 @@
 .result-table tbody tr {
   cursor: pointer;
   transition: background 0.12s;
+}
+
+/* 斑马纹 */
+.result-table tbody tr:nth-child(even) {
+  background: #fafbfc;
 }
 
 .result-table tbody tr:hover {
@@ -443,8 +649,50 @@
   color: #1971c2;
 }
 
+.th-btn.th-active {
+  color: #1971c2;
+  font-weight: 700;
+}
+
 .rank {
   color: #868e96;
+}
+
+/* 回测调仓记录：展开完整持仓名单 */
+.btn-link {
+  background: none;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  color: #1971c2;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  margin-left: 6px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.btn-link:hover {
+  border-color: #1971c2;
+  background: #e7f5ff;
+}
+
+.holdings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 240px;
+  padding: 2px 0;
+}
+
+.holding-line {
+  font-size: 12px;
+  color: #343a40;
+  white-space: nowrap;
+}
+
+.trade-row-open td {
+  background: #f8f9fa;
 }
 
 .code {
@@ -456,9 +704,153 @@
   font-weight: 600;
 }
 
+/* 名称列内：名称 + 监控按钮 */
+.name-text {
+  margin-right: 6px;
+}
+
+/* 板块列：行业 + 概念标签 */
+.sector-cell {
+  text-align: left;
+  white-space: normal;
+  min-width: 120px;
+}
+
+.sector-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1864ab;
+  background: #e7f5ff;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+
+.concept-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5f3dc4;
+  background: #f3f0ff;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+
+.watch-add-btn {
+  background: none;
+  border: 1px solid #adb5bd;
+  border-radius: 6px;
+  color: #495057;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+
+.watch-add-btn:hover {
+  border-color: #1971c2;
+  color: #1971c2;
+  background: #e7f5ff;
+}
+
+.watch-add-btn.watched {
+  border-color: #f59f00;
+  color: #f59f00;
+  background: #fff9db;
+}
+
+.watch-add-btn.watched:hover {
+  border-color: #e8590c;
+  color: #e8590c;
+  background: #ffe8cc;
+}
+
 .total-score strong {
   color: #1971c2;
   font-size: 15px;
+}
+
+/* 名称列内：模拟买入按钮 */
+.buy-add-btn {
+  background: none;
+  border: 1px solid #2b8a3e;
+  border-radius: 6px;
+  color: #2b8a3e;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: all 0.12s;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.buy-add-btn:hover {
+  background: #d3f9d8;
+  border-color: #2b8a3e;
+}
+
+.buy-add-btn.held {
+  border-color: #adb5bd;
+  color: #adb5bd;
+  cursor: default;
+}
+
+.buy-add-btn.held:hover {
+  background: none;
+}
+
+/* ---------- 选股结果：买卖点列 ---------- */
+.result-table th.signal-th,
+.result-table td.signal-cell {
+  text-align: left;
+  min-width: 230px;
+}
+
+.signal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+}
+
+.signal-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.signal-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.signal-buy {
+  background: #e7f5ff;
+  color: #1864ab;
+}
+
+.signal-profit {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.signal-stop {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+.signal-rr {
+  align-self: flex-start;
 }
 
 .score-pill {
@@ -484,6 +876,65 @@
 .score-pill.bad {
   background: #ffe3e3;
   color: #c92a2a;
+}
+
+/* 复盘页：两种统计口径分组标题 */
+.settle-group-title {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  color: #495057;
+  border-left: 3px solid #1971c2;
+  padding-left: 8px;
+}
+
+/* 策略表现追踪 */
+.strategy-stats tbody tr.strategy-best td {
+  background: #d3f9d8;
+}
+
+.strategy-stats tbody tr.strategy-legacy td {
+  opacity: 0.55;
+}
+
+/* 最近两次推荐对比 */
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.compare-col {
+  border: 1px solid #f1f3f5;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.compare-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f1f3f5;
+}
+
+.compare-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.compare-name {
+  font-weight: 600;
+  color: #343a40;
+  min-width: 64px;
+}
+
+.compare-status {
+  margin-left: auto;
+  font-size: 12px;
 }
 
 /* ---------- 详情弹窗 ---------- */
@@ -700,6 +1151,1174 @@
   color: #c92a2a;
 }
 
+/* ---------- 个股详情：箱体突破信号 ---------- */
+.box-breakout-line {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #dee2e6;
+}
+
+.box-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  align-self: flex-start;
+}
+
+.box-hot {
+  background: #ffe066;
+  color: #a61e1e;
+}
+
+.box-active {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.box-idle {
+  background: #f1f3f5;
+  color: #495057;
+}
+
+.box-sub {
+  font-size: 11px;
+  color: #495057;
+}
+
+/* ---------- 个股详情：企稳状态大标识 ---------- */
+.verdict-card {
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 2px solid;
+}
+
+.verdict-good {
+  background: #f4fce3;
+  border-color: #2b8a3e;
+}
+
+.verdict-mid {
+  background: #fff9db;
+  border-color: #f59f00;
+}
+
+.verdict-warn {
+  background: #f8f9fa;
+  border-color: #adb5bd;
+}
+
+.verdict-bad {
+  background: #fff5f5;
+  border-color: #c92a2a;
+}
+
+.verdict-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.verdict-label {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.verdict-good .verdict-label { color: #2b8a3e; }
+.verdict-mid .verdict-label { color: #e67700; }
+.verdict-warn .verdict-label { color: #495057; }
+.verdict-bad .verdict-label { color: #c92a2a; }
+
+.verdict-score {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.verdict-confidence {
+  font-size: 12px;
+  color: #868e96;
+}
+
+.verdict-summary {
+  font-size: 13px;
+  color: #495057;
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.verdict-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.verdict-signal {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.verdict-signal.good {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.verdict-signal.risk {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+/* ---------- 个股详情：板块判断条件 ---------- */
+.sector-judge-card {
+  margin-bottom: 14px;
+}
+
+.sector-judge-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sector-judge-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 4px solid;
+  background: #f8f9fa;
+}
+
+.sector-judge-item.c-good { border-left-color: #2b8a3e; }
+.sector-judge-item.c-mid { border-left-color: #f59f00; }
+.sector-judge-item.c-bad { border-left-color: #c92a2a; }
+
+.sector-judge-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #343a40;
+  min-width: 90px;
+}
+
+.sector-judge-status {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.c-good .sector-judge-status { background: #d3f9d8; color: #2b8a3e; }
+.c-mid .sector-judge-status { background: #fff9db; color: #e67700; }
+.c-bad .sector-judge-status { background: #ffe3e3; color: #c92a2a; }
+
+.sector-judge-detail {
+  font-size: 11px;
+  color: #495057;
+}
+
+/* ---------- 个股详情：看盘指南 ---------- */
+.guide-card {
+  margin-bottom: 14px;
+}
+
+.guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.guide-rank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #1971c2;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.guide-1 .guide-rank { background: #c92a2a; }
+.guide-2 .guide-rank { background: #e67700; }
+.guide-3 .guide-rank { background: #f59f00; }
+.guide-4 .guide-rank { background: #2b8a3e; }
+.guide-5 .guide-rank { background: #1971c2; }
+
+.guide-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #343a40;
+  display: block;
+}
+
+.guide-desc {
+  font-size: 11px;
+  color: #868e96;
+  display: block;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ---------- 个股分析页：估值/资金/箱体/指南 ---------- */
+.sa-metric-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sa-metrics-card .sa-metric-grid,
+.sa-money-card .sa-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sa-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.sa-metric-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.sa-metric-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.sa-status-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sa-box-card .sa-box-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sa-box-detail {
+  font-size: 12px;
+  color: #495057;
+}
+
+.sa-guide-card .sa-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sa-guide-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #495057;
+}
+
+.sa-guide-rank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sa-guide-rank.r1 { background: #c92a2a; }
+.sa-guide-rank.r2 { background: #e67700; }
+.sa-guide-rank.r3 { background: #f59f00; }
+.sa-guide-rank.r4 { background: #2b8a3e; }
+.sa-guide-rank.r5 { background: #1971c2; }
+
+/* ---------- 个股分析页：选股维度数据 ---------- */
+.sa-selection-card {
+  margin-bottom: 14px;
+}
+
+/* ---------- 个股分析页：K线形态/支撑压力/量能 ---------- */
+.sa-pattern-card {
+  margin-bottom: 14px;
+}
+
+.sa-pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.sa-pattern-group {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.sa-pattern-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.sa-pattern-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+
+.sa-pattern-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.sa-pattern-signal {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.sa-pattern-signal.bullish { background: #d3f9d8; color: #2b8a3e; }
+.sa-pattern-signal.bearish { background: #ffe3e3; color: #c92a2a; }
+.sa-pattern-signal.neutral { background: #f1f3f5; color: #495057; }
+
+.sa-pattern-desc {
+  font-size: 10px;
+  color: #868e96;
+  width: 100%;
+}
+
+.sa-pattern-empty {
+  font-size: 11px;
+  color: #868e96;
+  padding: 4px 0;
+}
+
+.sa-pattern-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.sa-pattern-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.sa-pattern-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.sa-pattern-val.small { font-size: 10px; }
+.sa-pattern-val.support { color: #2b8a3e; }
+.sa-pattern-val.resistance { color: #c92a2a; }
+.sa-pattern-val.up { color: #2b8a3e; }
+.sa-pattern-val.down { color: #c92a2a; }
+
+/* ---------- 个股分析页：跳空缺口 ---------- */
+.sa-gap-card { margin-bottom: 14px; }
+
+.sa-gap-guide {
+  font-size: 11px;
+  color: #495057;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.sa-gap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.sa-gap-group {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.sa-gap-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+  margin-bottom: 6px;
+}
+
+.sa-gap-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.sa-gap-date {
+  color: #868e96;
+  min-width: 70px;
+}
+
+.sa-gap-range {
+  color: #343a40;
+  font-weight: 600;
+}
+
+.sa-gap-size {
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.sa-gap-size.up { color: #2b8a3e; }
+.sa-gap-size.down { color: #c92a2a; }
+
+.sa-gap-empty {
+  font-size: 11px;
+  color: #868e96;
+  padding: 4px 0;
+}
+
+.sa-gap-nearest {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.sa-gap-nearest-item {
+  color: #495057;
+}
+
+.sa-gap-nearest-item strong {
+  color: #1971c2;
+}
+
+/* ---------- 个股分析页：趋势动能 ---------- */
+.sa-momentum-card { margin-bottom: 14px; }
+
+.sa-momentum-guide {
+  font-size: 11px;
+  color: #495057;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.sa-momentum-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.sa-momentum-main.m-up { background: #f4fce3; }
+.sa-momentum-main.m-down { background: #fff5f5; }
+.sa-momentum-main.m-neutral { background: #f8f9fa; }
+
+.sa-momentum-label {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.m-up .sa-momentum-label { color: #2b8a3e; }
+.m-down .sa-momentum-label { color: #c92a2a; }
+.m-neutral .sa-momentum-label { color: #495057; }
+
+.sa-momentum-score {
+  font-size: 16px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.sa-momentum-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.sa-momentum-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  background: #f1f3f5;
+  color: #495057;
+}
+
+.sa-momentum-tag.tag-up { background: #d3f9d8; color: #2b8a3e; }
+.sa-momentum-tag.tag-down { background: #ffe3e3; color: #c92a2a; }
+
+.sa-momentum-breakdown {
+  display: flex;
+  gap: 12px;
+}
+
+.sa-momentum-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  padding: 6px;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.sa-momentum-item-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.sa-momentum-item-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.sa-momentum-item-val.up { color: #2b8a3e; }
+.sa-momentum-item-val.down { color: #c92a2a; }
+
+/* ---------- 区块说明文字 ---------- */
+.sa-section-hint {
+  font-size: 11px;
+  color: #868e96;
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+/* ---------- 板块轮动热度 ---------- */
+.sector-heat-card { margin-bottom: 14px; }
+
+.sector-heat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sector-heat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #f8f9fa;
+  border-left: 3px solid #adb5bd;
+}
+
+.sector-heat-item.hot { border-left-color: #c92a2a; background: #fff5f5; }
+.sector-heat-item.mid { border-left-color: #f59f00; background: #fff9db; }
+.sector-heat-item.cold { border-left-color: #2b8a3e; background: #f4fce3; }
+
+.sector-heat-rank {
+  font-size: 11px;
+  font-weight: 700;
+  color: #868e96;
+  width: 22px;
+}
+
+.sector-heat-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #343a40;
+  min-width: 70px;
+}
+
+.sector-heat-score {
+  font-size: 13px;
+  font-weight: 700;
+  width: 28px;
+  text-align: center;
+}
+
+.sector-heat-item.hot .sector-heat-score { color: #c92a2a; }
+.sector-heat-item.mid .sector-heat-score { color: #e67700; }
+.sector-heat-item.cold .sector-heat-score { color: #2b8a3e; }
+
+.sector-heat-change {
+  font-size: 12px;
+  font-weight: 700;
+  width: 60px;
+  text-align: right;
+}
+
+.sector-heat-change.up { color: #2b8a3e; }
+.sector-heat-change.down { color: #c92a2a; }
+
+.sector-heat-leader {
+  font-size: 11px;
+  color: #868e96;
+  margin-left: auto;
+}
+
+/* ---------- 移动止盈 ---------- */
+.target-trailing {
+  background: #d3f9d8;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.target-trailing .target-label {
+  font-size: 11px;
+  color: #2b8a3e;
+  display: block;
+}
+
+.target-trailing .target-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: #2b8a3e;
+}
+
+/* ---------- 买入决策 ---------- */
+.buy-decision-card {
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 2px solid;
+}
+
+.buy-decision-good { background: #f4fce3; border-color: #2b8a3e; }
+.buy-decision-warn { background: #fff9db; border-color: #f59f00; }
+.buy-decision-bad { background: #fff5f5; border-color: #c92a2a; }
+
+.buy-decision-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.buy-decision-verdict {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.buy-decision-good .buy-decision-verdict { color: #2b8a3e; }
+.buy-decision-warn .buy-decision-verdict { color: #e67700; }
+.buy-decision-bad .buy-decision-verdict { color: #c92a2a; }
+
+.buy-decision-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #495057;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.buy-decision-hint {
+  font-size: 12px;
+  color: #495057;
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.buy-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.buy-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.buy-check-icon {
+  font-size: 13px;
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+}
+
+.buy-check-pass .buy-check-icon { color: #2b8a3e; }
+.buy-check-fail .buy-check-icon { color: #c92a2a; }
+
+.buy-check-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #343a40;
+  min-width: 70px;
+}
+
+.buy-check-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.buy-check-tag:not(:where(.buy-check-tag)) { background: #f1f3f5; color: #495057; }
+
+.buy-check-item:has(.buy-check-tag) .buy-check-tag { background: #f1f3f5; color: #495057; }
+
+.buy-check-item:nth-child(1n) .buy-check-tag { background: #f1f3f5; color: #495057; }
+
+.buy-check-tag { background: #f1f3f5; color: #495057; }
+
+.buy-check-detail {
+  font-size: 11px;
+  color: #868e96;
+  margin-left: auto;
+}
+
+.buy-rr-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.buy-rr-box {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.buy-rr-label {
+  font-size: 11px;
+  color: #868e96;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.buy-rr-val {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.buy-rr-val.buy-rr-good { color: #2b8a3e; }
+.buy-rr-val.buy-rr-bad { color: #c92a2a; }
+
+.buy-rr-hint {
+  font-size: 10px;
+  color: #868e96;
+  display: block;
+  margin-top: 2px;
+}
+
+.buy-rr-pos {
+  font-size: 11px;
+  color: #495057;
+  line-height: 1.5;
+}
+
+/* 买入决策：一键操作按钮 */
+.buy-action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #dee2e6;
+}
+
+.btn-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .buy-rr-row { grid-template-columns: 1fr; }
+  .sa-gap-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .sa-gap-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .sa-pattern-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- 量价背离 + 资金趋势 ---------- */
+.sa-divergence-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sa-divergence-card { border-left: 4px solid; }
+.sa-divergence-card.div-bearish { border-left-color: #c92a2a; }
+.sa-divergence-card.div-bullish { border-left-color: #2b8a3e; }
+
+.sa-divergence-guide {
+  font-size: 11px;
+  color: #495057;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.sa-divergence-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.sa-divergence-badge.bearish { color: #c92a2a; }
+.sa-divergence-badge.bullish { color: #2b8a3e; }
+
+.sa-divergence-rel {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f3f5;
+  color: #495057;
+}
+
+.sa-divergence-detail {
+  font-size: 11px;
+  color: #868e96;
+  margin-bottom: 6px;
+}
+
+.sa-divergence-signal {
+  font-size: 12px;
+  color: #495057;
+  font-weight: 600;
+}
+
+.sa-moneyflow-card { border-left: 4px solid #1971c2; }
+
+.sa-moneyflow-guide {
+  font-size: 11px;
+  color: #495057;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.sa-moneyflow-trend {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #343a40;
+}
+
+.sa-moneyflow-trend.mf-in { color: #2b8a3e; }
+.sa-moneyflow-trend.mf-out { color: #c92a2a; }
+
+.sa-moneyflow-detail {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #868e96;
+  margin-bottom: 6px;
+}
+
+.sa-moneyflow-detail .up { color: #2b8a3e; font-weight: 700; }
+.sa-moneyflow-detail .down { color: #c92a2a; font-weight: 700; }
+
+.sa-moneyflow-signal {
+  font-size: 12px;
+  color: #495057;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .sa-divergence-row { grid-template-columns: 1fr; }
+}
+
+.sa-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.sa-sel-group {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.sa-sel-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.sa-sel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.sa-sel-row.highlight {
+  background: #fff;
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin: 2px -6px;
+}
+
+.sa-sel-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.sa-sel-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.sa-sel-val.small {
+  font-size: 10px;
+}
+
+.sa-sel-val.up { color: #2b8a3e; }
+.sa-sel-val.down { color: #c92a2a; }
+
+@media (max-width: 600px) {
+  .sa-selection-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .sa-metric-row,
+  .sa-status-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- 个股详情：企稳指标 ---------- */
+.stability-card {
+  margin-bottom: 14px;
+}
+
+.stability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.stability-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid #adb5bd;
+}
+
+.stability-item.ok {
+  border-left-color: #2b8a3e;
+}
+
+.stability-item.warn {
+  border-left-color: #f59f00;
+}
+
+.stability-item.bad {
+  border-left-color: #c92a2a;
+}
+
+.stability-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.stability-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+.stability-note {
+  font-size: 11px;
+  color: #868e96;
+}
+
+/* ---------- 个股详情：行业/概念标签 ---------- */
+.stock-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tag {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.tag-industry {
+  background: #e7f5ff;
+  color: #1864ab;
+}
+
+.tag-concept {
+  background: #f3f0ff;
+  color: #5f3dc4;
+}
+
+/* ---------- 个股详情：估值与市值指标条 ---------- */
+.metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  margin-bottom: 14px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 12px;
+  border-right: 1px solid #f1f3f5;
+}
+
+.metric-item:last-child {
+  border-right: none;
+}
+
+.metric-item .metric-label {
+  font-size: 11px;
+  color: #868e96;
+}
+
+.metric-item .metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #343a40;
+}
+
+/* ---------- 个股详情：所属板块表现 ---------- */
+.sector-card {
+  margin-bottom: 14px;
+}
+
+.sector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sector-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sector-row-label {
+  font-size: 12px;
+  color: #868e96;
+  min-width: 40px;
+}
+
+.sector-brief {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.sector-strong {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.sector-weak {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+.sector-brief-name {
+  font-weight: 700;
+}
+
+.sector-brief-avg,
+.sector-brief-rank {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.sector-row-stat {
+  font-size: 12px;
+  color: #495057;
+}
+
 .total-score-big {
   display: flex;
   align-items: baseline;
@@ -836,7 +2455,7 @@
   }
 
   .tab-btn {
-    padding: 8px 14px;
+    padding: 6px 10px;
     font-size: 13px;
     display: inline-block;
   }
@@ -859,9 +2478,9 @@
     font-size: 12px;
   }
 
-  /* 结果表格：横向滚动 */
+  /* 结果表格：横向滚动（顶部滚动条） */
   .table-wrap {
-    overflow-x: auto;
+    overflow-x: hidden;
     max-height: 60vh;
   }
 
@@ -1127,6 +2746,82 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 14px;
+}
+
+/* ── 组合透视卡片 ── */
+.portfolio-view {
+  margin-top: 14px;
+}
+
+.portfolio-view h3 {
+  margin: 0 0 10px;
+}
+
+.pv-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.pv-label {
+  flex-shrink: 0;
+  color: #868e96;
+  line-height: 24px;
+  min-width: 56px;
+}
+
+.pv-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pv-tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: #f1f3f5;
+  color: #495057;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.pv-tag-hot {
+  background: #ffe8cc;
+  color: #d9480f;
+  font-weight: 600;
+}
+
+.pv-risk {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pv-risk-low {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.pv-risk-medium {
+  background: #fff3bf;
+  color: #e8590c;
+}
+
+.pv-risk-high {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+.pv-advice {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #343a40;
 }
 
 .pick-card {
@@ -1958,4 +3653,407 @@
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* ───────────── 个股分析：中文名搜索联想 ───────────── */
+.sa-search-wrap {
+  position: relative;
+}
+
+.sa-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.sa-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.sa-suggest-item:hover {
+  background: #f1f3f5;
+}
+
+.sa-sug-name {
+  font-weight: 700;
+  color: #212529;
+}
+
+.sa-suggest-item .code-muted {
+  font-size: 12px;
+}
+
+
+/* ───────────── 个股买卖点分析（StockAnalysisPanel） ───────────── */
+.sa-verdict {
+  border-left: 5px solid #adb5bd;
+}
+
+.sa-verdict.sa-buy {
+  border-left-color: #2b8a3e;
+  background: linear-gradient(135deg, #f6fffb 0%, #fff 60%);
+}
+
+.sa-verdict.sa-watch {
+  border-left-color: #e8590c;
+  background: linear-gradient(135deg, #fff9f0 0%, #fff 60%);
+}
+
+.sa-verdict.sa-avoid {
+  border-left-color: #c92a2a;
+  background: linear-gradient(135deg, #fff5f5 0%, #fff 60%);
+}
+
+.sa-verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sa-verdict-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.sa-verdict-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.sa-verdict-title .code-muted {
+  margin-left: 6px;
+}
+
+.sa-verdict-label {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sa-buy .sa-verdict-label {
+  color: #2b8a3e;
+}
+
+.sa-watch .sa-verdict-label {
+  color: #e8590c;
+}
+
+.sa-avoid .sa-verdict-label {
+  color: #c92a2a;
+}
+
+.sa-score-box {
+  margin-left: auto;
+  text-align: right;
+}
+
+.sa-score-val {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.sa-buy .sa-score-val {
+  color: #2b8a3e;
+}
+
+.sa-watch .sa-score-val {
+  color: #e8590c;
+}
+
+.sa-avoid .sa-score-val {
+  color: #c92a2a;
+}
+
+.sa-score-label {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #868e96;
+}
+
+.sa-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.sa-price {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sa-summary {
+  margin: 10px 0 6px;
+  color: #495057;
+  line-height: 1.6;
+}
+
+.sa-zone {
+  position: relative;
+  height: 10px;
+  margin: 14px 2px 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e7f5ff 0%, #d3f9d8 48%, #fff3bf 72%, #ffe3e3 100%);
+}
+
+.sa-zone-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.sa-zone-support {
+  background: #1864ab;
+}
+
+.sa-zone-price {
+  background: #e8590c;
+}
+
+.sa-zone-target {
+  background: #2b8a3e;
+}
+
+.sa-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sa-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8f9fa;
+}
+
+.sa-check-pass {
+  background: #f6fffb;
+}
+
+.sa-check-fail {
+  background: #fff5f5;
+}
+
+.sa-check-mark {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.sa-check-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sa-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sa-check-detail {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+/* ---------- 板块分析 ---------- */
+.sector-analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sector-analysis-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.sector-analysis-item:hover {
+  border-color: #1971c2;
+}
+
+.sector-analysis-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.sector-rank-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #1971c2, #4dabf7);
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.sector-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sector-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.sector-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+
+.sector-leaders {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.leader-tag {
+  font-size: 11px;
+  background: #fff0f6;
+  color: #e64980;
+  border: 1px solid #faa2c1;
+  border-radius: 8px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.sector-recommend-btn {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #1971c2, #4dabf7);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+}
+
+.sector-recommend-btn:hover {
+  background: linear-gradient(135deg, #1864ab, #339af0);
+}
+
+.sector-recommend-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sector-progress {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border-top: 1px solid #f1f3f5;
+}
+
+.sector-stocks {
+  border-top: 1px solid #f1f3f5;
+  background: #fafbfc;
+}
+
+.sector-stocks-table {
+  font-size: 12.5px;
+}
+
+.sector-stocks-table th {
+  background: #f1f3f5;
+  font-size: 11.5px;
+}
+
+.sector-stocks-table td {
+  padding: 7px 10px;
+}
+
+.factor-mini-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.factor-mini-tag {
+  font-size: 10.5px;
+  background: #e7f5ff;
+  color: #1864ab;
+  border-radius: 8px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.risk-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: #ffe3e3;
+  color: #c92a2a;
+  border-radius: 8px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+/* 手机端板块分析适配 */
+@media (max-width: 768px) {
+  .sector-analysis-head {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .sector-leaders {
+    display: none;
+  }
+
+  .sector-stats {
+    font-size: 11px;
+  }
+
+  .sector-recommend-btn {
+    width: 100%;
+    margin-top: 4px;
+  }
+
+  .sector-stocks-table {
+    min-width: 500px;
+  }
 }

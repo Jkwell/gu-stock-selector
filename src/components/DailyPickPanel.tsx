@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DailyPickResult, SelectConfig, StockScore } from '../types'
 import { fetchMarketStocks, fetchSectorList, runDailyPick, type PipelineProgress } from '../data/pipeline'
 import { STRATEGY_TEMPLATES, applyTemplate } from '../config/factors'
 import { computeMarketSentiment, type MarketSentiment } from '../engine/marketSentiment'
 import { positionAdvice } from '../engine/positionAdvice'
 import { addToWatchlist, watchItemFrom } from '../data/watchlist'
-import { recordFromPicks, savePickRecord } from '../data/records'
+import { recordFromPicks, savePickRecord, toLocalDateString } from '../data/records'
 import StrategyGuideModal from './StrategyGuideModal'
 import type { DailyPick } from '../types'
+import { analyzePortfolio, type PortfolioView } from '../engine/portfolioView'
 
 interface Props {
   config: SelectConfig
@@ -101,7 +102,12 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
             }),
           ),
         )
-        savePickRecord(recordFromPicks(new Date().toISOString().slice(0, 10), r.picks))
+        savePickRecord(
+          recordFromPicks(toLocalDateString(new Date()), r.picks, {
+            key: activeTemplate.key,
+            name: activeTemplate.name,
+          }),
+        )
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -241,6 +247,10 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
               <PickCard key={p.code} pick={p} rank={i + 1} onSelect={onSelect} />
             ))}
           </div>
+          {result.picks.length >= 2 &&
+            result.picks.some((p) => p.industry || p.concept) && (
+              <PortfolioViewCard picks={result.picks} />
+            )}
           {result.picks.length === 0 && (
             <div className="error-banner">
               ⚠️ {result.gateReason ?? '未选出符合条件的股票，请稍后重试'}
@@ -251,6 +261,49 @@ export default function DailyPickPanel({ config, onSelect }: Props) {
 
       {showGuide && <StrategyGuideModal onClose={() => setShowGuide(false)} />}
     </div>
+  )
+}
+
+/** 组合透视卡片：行业/概念重叠度 + 组合风险建议 */
+function PortfolioViewCard({ picks }: { picks: DailyPick[] }) {
+  const view: PortfolioView = useMemo(() => analyzePortfolio(picks), [picks])
+  const riskIcon = view.riskLevel === 'high' ? '🔴' : view.riskLevel === 'medium' ? '🟡' : '🟢'
+  const riskText =
+    view.riskLevel === 'high' ? '高度集中' : view.riskLevel === 'medium' ? '中等集中' : '分散良好'
+  return (
+    <section className="card portfolio-view">
+      <h3>📊 组合透视</h3>
+      <div className="pv-row">
+        <span className="pv-label">行业分布</span>
+        <div className="pv-tags">
+          {view.industryGroups.map((g) => (
+            <span
+              key={g.industry}
+              className={`pv-tag ${g.count >= 2 && g.industry !== '未知' ? 'pv-tag-hot' : ''}`}
+              title={g.names.join('、')}
+            >
+              {g.industry} ×{g.count}
+            </span>
+          ))}
+        </div>
+      </div>
+      {view.sharedConcepts.length > 0 && (
+        <div className="pv-row">
+          <span className="pv-label">概念扎堆</span>
+          <div className="pv-tags">
+            {view.sharedConcepts.map((c) => (
+              <span key={c.concept} className="pv-tag pv-tag-hot" title={c.names.join('、')}>
+                {c.concept} ×{c.count}（{c.names.join('、')}）
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className={`pv-risk pv-risk-${view.riskLevel}`}>
+        {riskIcon} 组合风险：{riskText}
+      </div>
+      <p className="pv-advice">{view.advice}</p>
+    </section>
   )
 }
 
@@ -282,9 +335,15 @@ function PickCard({
           name: pick.name,
           market: pick.market,
           industry: pick.industry,
+          concept: pick.concept,
           totalScore: pick.totalScore,
           price: pick.price,
           changePct: pick.changePct,
+          totalMv: pick.totalMv,
+          floatMv: pick.floatMv,
+          pe: pick.pe,
+          pb: pick.pb,
+          turnoverRate: pick.turnoverRate,
           factorScores: pick.factorScores,
         })
       }

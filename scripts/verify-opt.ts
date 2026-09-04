@@ -19,7 +19,7 @@ const check = (name: string, cond: boolean, extra = '') => {
 }
 
 /** 构造 N 只股票的同步 K 线（日期升序，价格 10 起步） */
-function makeStocks(n: number, days = 60): Array<{ code: string; kline: Kline[] }> {
+function makeStocks(n: number, days = 60): Array<{ code: string; name: string; kline: Kline[] }> {
   const dates: string[] = []
   const start = new Date(2026, 4, 1)
   for (let i = 0; i < days; i++) {
@@ -41,7 +41,7 @@ function makeStocks(n: number, days = 60): Array<{ code: string; kline: Kline[] 
         amount: close * 10000 * 100,
       }
     })
-    stocks.push({ code: `60000${s}`, kline })
+    stocks.push({ code: `60000${s}`, name: `测试${s}`, kline })
   }
   return stocks
 }

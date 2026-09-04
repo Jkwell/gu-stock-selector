@@ -7,6 +7,8 @@ import type { DailyPick } from '../types'
 
 export interface PickRecord {
   date: string // 推荐日期 YYYY-MM-DD
+  /** 本次推荐使用的策略模板（旧记录无此字段，归为 legacy） */
+  strategy?: { key: string; name: string }
   picks: Array<{
     code: string
     name: string
@@ -21,6 +23,14 @@ export interface PickRecord {
 
 const STORAGE_KEY = 'stock-selector-picks-history'
 const MAX_DAYS = 30 // 保留最近 30 天
+
+/** 本地时区日期 'YYYY-MM-DD'（避免 toISOString 的 UTC 偏移，北京 0-8 点会记成前一天） */
+export function toLocalDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = d.getMonth() + 1
+  const day = d.getDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
 
 export function getPickRecords(): PickRecord[] {
   try {
@@ -51,9 +61,14 @@ export function savePickRecord(record: PickRecord): PickRecord[] {
 }
 
 /** 从今日推荐结果构造记录 */
-export function recordFromPicks(date: string, picks: DailyPick[]): PickRecord {
+export function recordFromPicks(
+  date: string,
+  picks: DailyPick[],
+  strategy?: { key: string; name: string },
+): PickRecord {
   return {
     date,
+    strategy,
     picks: picks.map((p) => ({
       code: p.code,
       name: p.name,

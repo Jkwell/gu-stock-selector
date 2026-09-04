@@ -14,23 +14,29 @@ import MarketPanel from './components/MarketPanel'
 import ReviewPanel from './components/ReviewPanel'
 import PositionPanel from './components/PositionPanel'
 import AIPanel from './components/AIPanel'
+import StockAnalysisPanel from './components/StockAnalysisPanel'
+import SectorAnalysisPanel from './components/SectorAnalysisPanel'
 import './App.css'
 
-type Tab = 'market' | 'review' | 'position' | 'watch' | 'daily' | 'select' | 'ic' | 'backtest' | 'ai'
+type Tab = 'market' | 'review' | 'position' | 'watch' | 'daily' | 'select' | 'ic' | 'backtest' | 'ai' | 'analyze' | 'sector'
 
 const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'market', label: '🌡️ 市场' },
-  { key: 'review', label: '📋 复盘' },
-  { key: 'position', label: '💰 持仓' },
-  { key: 'watch', label: '👁️ 监控' },
+  // 核心交易
   { key: 'daily', label: '🎯 今日推荐' },
-  { key: 'ai', label: '🤖 AI 研报' },
   { key: 'select', label: '📋 选股' },
-  { key: 'ic', label: '🔬 因子分析' },
+  { key: 'analyze', label: '🔍 个股分析' },
+  // 跟踪与风控
+  { key: 'watch', label: '👁️ 监控' },
+  { key: 'position', label: '💰 持仓' },
+  { key: 'review', label: '📋 复盘' },
+  // 研究与工具
+  { key: 'sector', label: '🔥 板块分析' },
   { key: 'backtest', label: '📊 策略回测' },
+  { key: 'ic', label: '🔬 因子分析' },
+  { key: 'ai', label: '🤖 AI 研报' },
 ]
 
-const MOBILE_PRIMARY_TABS: Tab[] = ['market', 'daily', 'select', 'watch']
+const MOBILE_PRIMARY_TABS: Tab[] = ['daily', 'select', 'watch']
 
 export default function App() {
   const [config, setConfig] = useState<SelectConfig>(() =>
@@ -40,17 +46,35 @@ export default function App() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
-  const [result, setResult] = useState<SelectionResult | null>(null)
+  const [result, setResult] = useState<SelectionResult | null>(() => {
+    try {
+      const raw = localStorage.getItem('stock-selector-result')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })
   const [selected, setSelected] = useState<StockScore | null>(null)
+
+  // 持久化选股结果
+  const persistResult = (r: SelectionResult | null) => {
+    setResult(r)
+    try {
+      if (r) localStorage.setItem('stock-selector-result', JSON.stringify(r))
+      else localStorage.removeItem('stock-selector-result')
+    } catch {
+      // ignore
+    }
+  }
   const [error, setError] = useState<string | null>(null)
 
   const start = async () => {
     setRunning(true)
     setError(null)
-    setResult(null)
+    persistResult(null)
     try {
       const r = await runSelection(config, { onProgress: setProgress, concurrency: 8 })
-      setResult(r)
+      persistResult(r)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -60,13 +84,12 @@ export default function App() {
   }
 
   const backToConfig = () => {
-    setResult(null)
+    persistResult(null)
     setTab('select')
   }
 
   const switchTab = (next: Tab) => {
     setTab(next)
-    setResult(null)
     setMobileMoreOpen(false)
   }
 
@@ -77,7 +100,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>📈 多因子选股工具</h1>
+        <h1>📈 多因子工具</h1>
         <div className="header-actions">
           <span className="muted">数据源：东方财富 / 腾讯行情（免费）</span>
           <button
@@ -121,6 +144,8 @@ export default function App() {
 
       {tab === 'ai' && <AIPanel />}
 
+      {tab === 'analyze' && <StockAnalysisPanel />}
+
       {tab === 'select' &&
         (!result ? (
           <ConfigPanel
@@ -147,6 +172,8 @@ export default function App() {
         />
       )}
       {tab === 'backtest' && <BacktestPanel config={config} />}
+
+      {tab === 'sector' && <SectorAnalysisPanel />}
 
       {running && progress && (
         <div className="progress-bar-wrap">

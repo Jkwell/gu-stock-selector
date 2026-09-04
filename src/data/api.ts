@@ -165,7 +165,7 @@ function parseClistDiff(diff: Array<Record<string, number | string | null>>): St
         name: String(d.f14 ?? ''),
         market: (d.f13 === 1 ? 'sh' : 'sz') as StockInfo['market'],
         industry: d.f100 ? String(d.f100) : undefined,
-        concept: d.f128 ? String(d.f128) : undefined,
+        concept: d.f128 && d.f128 !== '-' ? String(d.f128) : undefined,
         price: toNum(d.f2),
         changePct: toNum(d.f3),
         totalMv: toNum(d.f20),
@@ -173,6 +173,7 @@ function parseClistDiff(diff: Array<Record<string, number | string | null>>): St
         pe: pe !== undefined && pe > 0 ? pe : undefined,
         pb: pb !== undefined && pb > 0 ? pb : undefined,
         turnoverRate: toNum(d.f8),
+        amount: toNum(d.f6),
       } as StockInfo
     })
     .filter((x): x is StockInfo => x !== null)
@@ -193,7 +194,7 @@ export async function fetchStockList(
       : pool === 'hs300'
         ? 'b:BK0500'
         : 'b:BK0701'
-  const fields = 'f2,f3,f8,f9,f12,f13,f14,f20,f21,f23,f100,f128'
+  const fields = 'f2,f3,f6,f8,f9,f12,f13,f14,f20,f21,f23,f100,f128'
   const all: StockInfo[] = []
   const seen = new Set<string>() // 按代码去重，防止代理兜底缓存重复页导致候选池重复
   const pz = 100 // 东财 clist 单页上限 100
@@ -212,13 +213,14 @@ export async function fetchStockList(
     })
     params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
     let data: ClistResponse
-    try {
-      data = await fetchEastmoneyJsonp<ClistResponse>(EM_CLIST, params)
-    } catch (jsonpError) {
-      if (!isDev()) throw jsonpError
+    if (isDev()) {
+      // 本地开发优先走代理（代理内置 push2delay 镜像兜底），
+      // 避免直连被封锁/限流的 push2 时每次 JSONP 都空等超时拖慢整条流水线
       data = await fetchJson<ClistResponse>(`/api/clist?${params.toString()}`, {
         Referer: 'https://quote.eastmoney.com/',
       })
+    } else {
+      data = await fetchEastmoneyJsonp<ClistResponse>(EM_CLIST, params)
     }
     const list = data.data?.diff ?? []
     for (const s of parseClistDiff(list)) {
@@ -433,13 +435,12 @@ export async function fetchMoneyFlow(
     fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
   })
   let data: FflowResponse
-  try {
-    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW, query)
-  } catch (jsonpError) {
-    if (!isDev()) throw jsonpError
+  if (isDev()) {
     data = await fetchJson<FflowResponse>(`/api/fflow?${query.toString()}`, {
       Referer: 'https://quote.eastmoney.com/',
     })
+  } else {
+    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW, query)
   }
   const line = data.data?.klines?.[0]
   if (!line) return null
@@ -468,13 +469,12 @@ export async function fetchMoneyFlowHistory(
     fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
   })
   let data: FflowResponse
-  try {
-    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW_HIS, query)
-  } catch (jsonpError) {
-    if (!isDev()) throw jsonpError
+  if (isDev()) {
     data = await fetchJson<FflowResponse>(`/api/fflow-history?${query.toString()}`, {
       Referer: 'https://quote.eastmoney.com/',
     })
+  } else {
+    data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW_HIS, query)
   }
   const klines = data.data?.klines ?? []
   return klines.map((line) => {
@@ -518,16 +518,15 @@ export async function fetchFinancials(code: string, asOfDate?: string): Promise<
     sortColumns,
   })
   let data: FinancialsResponse
-  try {
-    data = await fetchEastmoneyJsonp<FinancialsResponse>(EM_DATA, query)
-  } catch (jsonpError) {
-    if (!isDev()) throw jsonpError
+  if (isDev()) {
     const path = `/api/financials?code=${encodeURIComponent(code)}${
       normalizedAsOf ? `&asOfDate=${normalizedAsOf}` : ''
     }`
     data = await fetchJson<FinancialsResponse>(path, {
       Referer: 'https://data.eastmoney.com/',
     })
+  } else {
+    data = await fetchEastmoneyJsonp<FinancialsResponse>(EM_DATA, query)
   }
   const row = data.result?.data?.[0]
   if (!row) return null

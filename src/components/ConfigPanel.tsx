@@ -23,13 +23,6 @@ const POOL_HINTS: Record<SelectConfig['pool'], string> = {
   zz500: '中证500 成分股 500 只',
 }
 
-const CANDIDATE_LABELS: Record<SelectConfig['candidatePool'], string> = {
-  momentum: '今日涨幅（动量）',
-  turnover: '换手率（资金活跃）',
-  liquid: '流通市值（流动性）',
-  marketcap: '总市值（规模）',
-}
-
 /** 更新单个因子 */
 function updateFactor(
   config: SelectConfig,
@@ -218,48 +211,10 @@ export default function ConfigPanel({ config, onChange, onStart, disabled }: Pro
         </div>
       </section>
 
-      {/* 候选池与过滤 */}
+      {/* 过滤条件 */}
       <section className="card">
-        <h3>③ 候选池与过滤条件</h3>
+        <h3>③ 过滤条件</h3>
         <div className="filter-grid">
-          <label className="field">
-            <span className="field-label">候选池筛选</span>
-            <select
-              value={config.candidatePool}
-              onChange={(e) =>
-                onChange({
-                  ...config,
-                  candidatePool: e.target.value as SelectConfig['candidatePool'],
-                })
-              }
-            >
-              {(Object.keys(CANDIDATE_LABELS) as SelectConfig['candidatePool'][]).map(
-                (k) => (
-                  <option key={k} value={k}>
-                    {CANDIDATE_LABELS[k]}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-
-          <label className="field">
-            <span className="field-label">候选数量（拉K线数）</span>
-            <input
-              type="number"
-              min={20}
-              max={1000}
-              step={10}
-              value={config.candidateCount}
-              onChange={(e) =>
-                onChange({
-                  ...config,
-                  candidateCount: Math.max(20, Number(e.target.value) || 200),
-                })
-              }
-            />
-          </label>
-
           <label className="field">
             <span className="field-label">最小总市值（亿元）</span>
             <input
@@ -301,32 +256,6 @@ export default function ConfigPanel({ config, onChange, onStart, disabled }: Pro
               onChange={(e) => onChange({ ...config, excludeCyb: e.target.checked })}
             />
             <span>排除创业板（300/301）</span>
-          </label>
-
-          <label className="field checkbox-field">
-            <input
-              type="checkbox"
-              checked={config.diversify}
-              onChange={(e) => onChange({ ...config, diversify: e.target.checked })}
-            />
-            <span>行业分散（避免结果集中在少数行业）</span>
-          </label>
-
-          <label className="field">
-            <span className="field-label">每行业上限（只）</span>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={config.maxPerIndustry}
-              disabled={!config.diversify}
-              onChange={(e) =>
-                onChange({
-                  ...config,
-                  maxPerIndustry: Math.max(1, Math.min(10, Number(e.target.value) || 3)),
-                })
-              }
-            />
           </label>
         </div>
       </section>

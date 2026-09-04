@@ -19,15 +19,23 @@
     "verify:monitor": "tsx scripts/verify-monitor.ts",
     "verify:market": "tsx scripts/verify-market.ts",
     "verify:concept": "tsx scripts/verify-concept.ts",
+    "scan:sectors": "tsx scripts/scan-sectors.ts",
+    "verify:heat": "tsx scripts/verify-heat.ts",
+    "verify:overheat": "tsx scripts/verify-overheat.ts",
     "verify:fallback": "tsx scripts/verify-fallback.ts",
     "verify:quickrules": "tsx scripts/verify-quickrules.ts",
     "verify:rules": "tsx scripts/verify-rules.ts",
     "verify:advice": "tsx scripts/verify-advice.ts",
     "verify:opt": "tsx scripts/verify-opt.ts",
-    "verify:financials": "tsx scripts/verify-financials.ts"
+    "verify:financials": "tsx scripts/verify-financials.ts",
+    "verify:settle": "tsx scripts/verify-settle.ts",
+    "verify:portfolio": "tsx scripts/verify-portfolio.ts",
+    "verify:strategy": "tsx scripts/verify-strategy.ts",
+    "verify:stockanalysis": "tsx scripts/verify-stockanalysis.ts"
   },
   "dependencies": {
     "echarts": "^5.5.1",
+    "pnpm": "^11.25.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { StockScore } from '../types'
 import { fetchRealtimeQuotes, type Quote } from '../data/api'
 import { addPosition, getPositions, removePosition, type Position } from '../data/positions'
+import { addTrade, getTrades, type TradeRecord } from '../data/trades'
 
 interface Props {
   onSelect: (stock: StockScore) => void
@@ -11,6 +12,7 @@ const REFRESH_MS = 10000
 
 export default function PositionPanel({ onSelect }: Props) {
   const [positions, setPositions] = useState<Position[]>(() => getPositions())
+  const [trades, setTrades] = useState<TradeRecord[]>(() => getTrades())
   const [quotes, setQuotes] = useState<Map<string, Quote>>(new Map())
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   // 添加表单
@@ -69,8 +71,28 @@ export default function PositionPanel({ onSelect }: Props) {
   }
 
   const handleRemove = (c: string) => {
+    const pos = getPositions().find((p) => p.code === c)
     removePosition(c)
     setPositions(getPositions())
+    // 卖出闭环：按现价记录一笔实际交易
+    if (pos) {
+      const q = quotes.get(c)
+      const sellPrice = q?.price
+      if (sellPrice !== undefined && sellPrice > 0) {
+        addTrade({
+          code: pos.code,
+          name: pos.name,
+          buyPrice: pos.buyPrice,
+          shares: pos.shares,
+          buyDate: pos.buyDate,
+          sellPrice,
+        })
+        setTrades(getTrades())
+        alert(`已卖出 ${pos.name} @ ¥${sellPrice.toFixed(2)}，交易已记入「📋 复盘」`)
+      } else {
+        alert('暂无实时价，已移除持仓但未记录交易盈亏')
+      }
+    }
   }
 
   // 总市值/盈亏
@@ -191,7 +213,7 @@ export default function PositionPanel({ onSelect }: Props) {
                   return (
                     <tr
                       key={p.code}
-                      style={{ cursor: 'pointer' }}
+                      className="position-row"
                       onClick={() =>
                         onSelect({
                           code: p.code,
@@ -234,6 +256,78 @@ export default function PositionPanel({ onSelect }: Props) {
                     </tr>
                   )
                 })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* 已完成交易（卖出闭环） */}
+      {trades.length > 0 && (
+        <section className="card" style={{ marginTop: 14 }}>
+          <div className="watch-header">
+            <h3 style={{ margin: 0 }}>📋 已完成交易（{trades.length} 笔）</h3>
+          </div>
+          {(() => {
+            let winCount = 0
+            let sumPct = 0
+            let sumPnl = 0
+            for (const t of trades) {
+              if (t.pnl > 0) winCount++
+              sumPct += t.pnlPct
+              sumPnl += t.pnl
+            }
+            const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
+            return (
+              <div className="metric-grid">
+                <div className="metric-card">
+                  <span className="metric-label">胜率</span>
+                  <span className="metric-value">{winRate.toFixed(1)}%</span>
+                </div>
+                <div className="metric-card">
+                  <span className="metric-label">累计盈亏</span>
+                  <span className={`metric-value ${sumPnl >= 0 ? 'up' : 'down'}`}>
+                    {sumPnl >= 0 ? '+' : ''}¥{sumPnl.toFixed(0)}
+                  </span>
+                </div>
+                <div className="metric-card">
+                  <span className="metric-label">平均盈亏率</span>
+                  <span className={`metric-value ${sumPct >= 0 ? 'up' : 'down'}`}>
+                    {sumPct >= 0 ? '+' : ''}{sumPct.toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
+          <div className="table-wrap" style={{ maxHeight: 'none', marginTop: 10 }}>
+            <table className="result-table">
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>代码</th>
+                  <th style={{ textAlign: 'left' }}>名称</th>
+                  <th>买入</th>
+                  <th>卖出</th>
+                  <th>股数</th>
+                  <th>盈亏</th>
+                  <th>盈亏率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trades.map((t, i) => (
+                  <tr key={i}>
+                    <td className="code">{t.code}</td>
+                    <td className="name" style={{ textAlign: 'left' }}>{t.name}</td>
+                    <td>{t.buyPrice.toFixed(2)}</td>
+                    <td>{t.sellPrice.toFixed(2)}</td>
+                    <td>{t.shares}</td>
+                    <td className={t.pnl >= 0 ? 'up' : 'down'}>
+                      {t.pnl >= 0 ? '+' : ''}¥{t.pnl.toFixed(0)}
+                    </td>
+                    <td className={t.pnlPct >= 0 ? 'up' : 'down'}>
+                      {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

@@ -53,12 +53,23 @@ const twoBoard = [...base, 11, 12.1]
 const r2 = scoreStocks([{ info: { code: '600002', name: '两连板', market: 'sh' }, kline: mk(twoBoard, []) }], [...limitUpFactor])
 console.log(`  两连板: highRisk=${r2[0].highRisk} ${r2[0].highRisk ? '❌ 不应触发' : '✅ 正常'}`)
 
+console.log('\n=== 3.5 通用高位风控（不依赖 limit_up 因子开关） ===')
+const trendOnly = [
+  { key: 'trend', name: '趋势强度', group: 'technical', weight: 1, enabled: true },
+] as const
+const r3 = scoreStocks([{ info: { code: '600003', name: '五连板趋势', market: 'sh' }, kline: mk(fiveBoard, []) }], [...trendOnly])
+console.log(`  仅 trend 因子下五连板: highRisk=${r3[0].highRisk} ${r3[0].highRisk ? '✅ 触发通用风控' : '❌'}`)
+const r4 = scoreStocks([{ info: { code: '600004', name: '两连板趋势', market: 'sh' }, kline: mk(twoBoard, []) }], [...trendOnly])
+console.log(`  仅 trend 因子下两连板: highRisk=${r4[0].highRisk} ${r4[0].highRisk ? '❌ 误报' : '✅ 正常'}`)
+
 const pass =
   s1.breakout &&
   (s2.squeeze ?? 1) > 0.05 &&
   t1.trend === 'above' &&
   t2.trend === 'below' &&
   s1r.highRisk === true &&
-  r2[0].highRisk === false
-console.log(pass ? '\n✅ 三项量化规则验证通过' : '\n❌ 验证失败')
+  r2[0].highRisk === false &&
+  r3[0].highRisk === true &&
+  r4[0].highRisk === false
+console.log(pass ? '\n✅ 量化规则验证通过' : '\n❌ 验证失败')
 if (!pass) process.exit(1)

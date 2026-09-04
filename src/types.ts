@@ -24,6 +24,7 @@ export interface StockInfo {
   pe?: number // 市盈率 TTM
   pb?: number // 市净率
   turnoverRate?: number // 换手率 %
+  amount?: number // 当日成交额（元）
 }
 
 /** 财务指标（季度） */
@@ -79,10 +80,31 @@ export interface StockScore {
   concept?: string
   highRisk?: boolean // 高位风险预警
   totalScore: number // 0~100
+  stabilityScore?: number // 企稳评分 -10~+10（越高越企稳）
+  buyScore?: number // 买入决策评分 0~9（越高越适合买入）
+  fundConcentration?: { level: 'high' | 'medium' | 'low'; ratio: number; superPct: number; bigPct: number }
+  sectorStrength?: { vsSector: number; rank: number; total: number; isLeader: boolean }
   dataCoverage?: number // 启用因子中实际有数据的权重占比（0~1）
   price?: number
   changePct?: number
+  totalMv?: number // 总市值（元）
+  floatMv?: number // 流通市值（元）
+  pe?: number // 市盈率 TTM
+  pb?: number // 市净率
+  turnoverRate?: number // 换手率 %
   factorScores: FactorScore[]
+  // 可选：由流水线用候选池 K 线预算的买卖点（详情弹窗会自行拉 K 线重算，更准）
+  signal?: TradingSignalBrief
+}
+
+/** 选股结果里附的买卖点摘要（由流水线用候选池 K 线预算） */
+export interface TradingSignalBrief {
+  buyLow: number
+  buyHigh: number
+  takeProfit: number
+  stopLoss: number
+  riskReward: number
+  shortMode: boolean // 是否短线模式（MA5 回踩）
 }
 
 /** 选股配置 */
@@ -126,6 +148,11 @@ export interface DailyPick {
   factorScores: FactorScore[] // 入选因子明细
   price?: number // 实时价
   changePct?: number
+  totalMv?: number // 总市值（元）
+  floatMv?: number // 流通市值（元）
+  pe?: number // 市盈率 TTM
+  pb?: number // 市净率
+  turnoverRate?: number // 换手率 %
   // 买卖点
   buyLow: number
   buyHigh: number

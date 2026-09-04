@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { SelectConfig } from '../types'
 import { loadKlineStocks } from '../data/pipeline'
 import { runBacktest, type BacktestConfig, type BacktestResult } from '../engine/backtest'
+import { runGentleVolumeBacktest, type BacktestResult as GvResult } from '../engine/backtest-gentle-volume'
 import { STRATEGY_TEMPLATES, applyTemplate } from '../config/factors'
 import { useECharts } from './charts/useECharts'
 import type * as echarts from 'echarts'
@@ -25,6 +26,8 @@ export default function BacktestPanel({ config }: Props) {
   const [progress, setProgress] = useState('')
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [compareResults, setCompareResults] = useState<Array<{ name: string; desc: string; result: BacktestResult }> | null>(null)
+  const [gvResult, setGvResult] = useState<GvResult | null>(null)
+  const [gvRunning, setGvRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // 多策略对比回测
@@ -51,6 +54,7 @@ export default function BacktestPanel({ config }: Props) {
           rebalanceDays,
           factors: applyTemplate(t, config).factors,
           costRate: costRatePct / 100,
+          gentleVolume: t.key === 'gentle_volume',
         }
         results.push({ name: t.name, desc: t.desc, result: runBacktest(stocks, btConfig) })
       }
@@ -60,6 +64,28 @@ export default function BacktestPanel({ config }: Props) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
+    }
+  }
+
+  // 温和放量策略回测（用当前选股打分逻辑跑历史）
+  const runGv = async () => {
+    setGvRunning(true)
+    setGvResult(null)
+    setError(null)
+    try {
+      const stocks = await loadKlineStocks(
+        { ...config, candidatePool: 'turnover', candidateCount: 300 },
+        { onProgress: (d, t) => setProgress(`拉取K线 ${d}/${t}…`) },
+      )
+      if (stocks.length < 20) throw new Error('有效股票不足 20 只')
+      setProgress('温和放量回测中…')
+      const result = runGentleVolumeBacktest(stocks, { topN: 10, holdDays: 5, lookbackDays: 120 })
+      setGvResult(result)
+      setProgress('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setGvRunning(false)
     }
   }
 
@@ -83,6 +109,11 @@ export default function BacktestPanel({ config }: Props) {
         rebalanceDays,
         factors: btFactors.factors,
         costRate: costRatePct / 100,
+        gentleVolume:
+          btFactors.factors.filter((f) => f.enabled).length >= 7 &&
+          ['volume', 'moneyflow', 'trend', 'macd', 'rsi', 'momentum_1m', 'short_momentum'].every(
+            (k) => btFactors.factors.some((f) => f.key === k && f.enabled),
+          ),
       }
       const r = runBacktest(stocks, btConfig)
       setResult(r)
@@ -174,10 +205,19 @@ export default function BacktestPanel({ config }: Props) {
           >
             🔍 多策略对比回测
           </button>
+          <button
+            className="btn btn-gv"
+            onClick={() => void runGv()}
+            disabled={gvRunning}
+            title="用当前温和放量打分逻辑，在历史 K 线上滚动回测"
+          >
+            {gvRunning ? `回测中… ${progress}` : '📈 温和放量回测'}
+          </button>
         </div>
       </section>
 
       {error && <div className="error-banner">⚠️ {error}</div>}
+      {gvResult && <GvBacktestResults result={gvResult} />}
       {result && <BacktestResults result={result} />}
       {compareResults && <CompareResults results={compareResults} />}
     </div>
@@ -249,6 +289,8 @@ function CompareResults({
 }
 
 function BacktestResults({ result }: { result: BacktestResult }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+  const [expandAll, setExpandAll] = useState(false)
   const equityOption: echarts.EChartsOption = useMemo(() => {
     return {
       animation: false,
@@ -351,39 +393,155 @@ function BacktestResults({ result }: { result: BacktestResult }) {
 
       <section className="card">
         <h3>调仓记录（{result.trades.length} 期）</h3>
+        <p className="muted" style={{ margin: '0 0 8px', fontSize: 12 }}>
+          点击"持仓"列可展开该期完整选股名单；调仓日 T 收盘选股，T+1 生效。
+        </p>
         <div className="table-wrap" style={{ maxHeight: 320 }}>
           <table className="result-table">
             <thead>
               <tr>
                 <th style={{ textAlign: 'left' }}>调仓日</th>
-                <th style={{ textAlign: 'left' }}>持仓代码</th>
+                <th style={{ textAlign: 'left' }}>
+                  持仓（{expandAll ? '收起全部' : '展开全部'}）
+                  <button
+                    className="btn-link"
+                    onClick={() => setExpandAll(!expandAll)}
+                  >
+                    {expandAll ? '−' : '+'}
+                  </button>
+                </th>
                 <th>本期收益</th>
                 <th>基准收益</th>
                 <th>超额</th>
               </tr>
             </thead>
             <tbody>
-              {result.trades.map((t, i) => (
-                <tr key={i}>
-                  <td>{t.rebalanceDate}</td>
-                  <td className="name" style={{ textAlign: 'left', fontSize: 12 }}>
-                    {t.codes.slice(0, 5).join(' ')}{t.codes.length > 5 ? ` 等${t.codes.length}只` : ''}
-                  </td>
-                  <td className={t.periodReturn >= 0 ? 'up' : 'down'}>
-                    {t.periodReturn.toFixed(1)}%
-                  </td>
-                  <td className={t.benchmarkReturn >= 0 ? 'up' : 'down'}>
-                    {t.benchmarkReturn.toFixed(1)}%
-                  </td>
-                  <td className={(t.periodReturn - t.benchmarkReturn) >= 0 ? 'up' : 'down'}>
-                    {(t.periodReturn - t.benchmarkReturn).toFixed(1)}%
-                  </td>
-                </tr>
-              ))}
+              {result.trades.map((t, i) => {
+                const open = expandAll || expandedIdx === i
+                const list = t.names.map((n, j) => `${n}(${t.codes[j]})`)
+                const preview = list.slice(0, 5)
+                return (
+                  <tr key={i} className={open ? 'trade-row-open' : ''}>
+                    <td>{t.rebalanceDate}</td>
+                    <td
+                      className="name"
+                      style={{ textAlign: 'left', fontSize: 12, cursor: 'pointer' }}
+                      onClick={() => setExpandedIdx(open ? null : i)}
+                      title={open ? '点击收起' : '点击展开完整名单'}
+                    >
+                      {open ? (
+                        <div className="holdings-list">
+                          {list.map((s, j) => (
+                            <div key={j} className="holding-line">{s}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          {preview.join(' ')}
+                          {t.codes.length > preview.length
+                            ? ` 等${t.codes.length}只（点击展开）`
+                            : ''}
+                        </>
+                      )}
+                    </td>
+                    <td className={t.periodReturn >= 0 ? 'up' : 'down'}>
+                      {t.periodReturn.toFixed(1)}%
+                    </td>
+                    <td className={t.benchmarkReturn >= 0 ? 'up' : 'down'}>
+                      {t.benchmarkReturn.toFixed(1)}%
+                    </td>
+                    <td className={(t.periodReturn - t.benchmarkReturn) >= 0 ? 'up' : 'down'}>
+                      {(t.periodReturn - t.benchmarkReturn).toFixed(1)}%
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       </section>
     </>
+  )
+}
+
+/** 温和放量策略回测结果 */
+function GvBacktestResults({ result }: { result: GvResult }) {
+  const winColor = result.winRate >= 55 ? 'good' : result.winRate >= 45 ? 'mid' : 'bad'
+  return (
+    <section className="card">
+      <h3>温和放量策略回测</h3>
+      <p className="muted">
+        {result.startDate} ~ {result.endDate} · 每 5 天调仓 · Top 10 等权持有
+      </p>
+      <div className="metric-grid">
+        <div className="metric-card">
+          <span className="metric-label">累计收益</span>
+          <span className={`metric-value ${result.totalReturn >= 0 ? 'up' : 'down'}`}>
+            {result.totalReturn >= 0 ? '+' : ''}{result.totalReturn}%
+          </span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">胜率</span>
+          <span className={`metric-value`}>
+            <span className={`score-pill ${winColor}`}>{result.winRate}%</span>
+          </span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">平均每笔</span>
+          <span className={`metric-value ${result.avgReturn >= 0 ? 'up' : 'down'}`}>
+            {result.avgReturn >= 0 ? '+' : ''}{result.avgReturn}%
+          </span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">交易笔数</span>
+          <span className="metric-value">{result.tradeCount}</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">单笔最大盈</span>
+          <span className="metric-value up">+{result.maxReturn}%</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">单笔最大亏</span>
+          <span className="metric-value down">{result.minReturn}%</span>
+        </div>
+      </div>
+      {result.trades.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <h4>最近交易</h4>
+          <div className="table-wrap" style={{ maxHeight: 300 }}>
+            <table className="result-table">
+              <thead>
+                <tr>
+                  <th>调仓日</th>
+                  <th>代码</th>
+                  <th>名称</th>
+                  <th>评分</th>
+                  <th>买入</th>
+                  <th>卖出</th>
+                  <th>持有</th>
+                  <th>收益</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.trades.map((t, i) => (
+                  <tr key={i}>
+                    <td>{t.date}</td>
+                    <td className="code">{t.code}</td>
+                    <td className="name" style={{ textAlign: 'left' }}>{t.name}</td>
+                    <td>{t.score}</td>
+                    <td>{t.entryPrice.toFixed(2)}</td>
+                    <td>{t.exitPrice.toFixed(2)}</td>
+                    <td>{t.exitDate}</td>
+                    <td className={t.returnPct >= 0 ? 'up' : 'down'}>
+                      {t.returnPct >= 0 ? '+' : ''}{t.returnPct}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
   )
 }

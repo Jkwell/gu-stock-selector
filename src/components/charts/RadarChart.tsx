@@ -9,6 +9,14 @@ interface Props {
 
 /** 因子得分雷达图 */
 export default function RadarChart({ factorScores, height = 280 }: Props) {
+  if (!factorScores || factorScores.length === 0) {
+    return (
+      <div className="radar-empty" style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span className="muted">暂无因子数据</span>
+      </div>
+    )
+  }
+
   const indicators = factorScores.map((f) => ({
     name: f.name,
     max: 100,

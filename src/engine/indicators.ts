@@ -85,6 +85,36 @@ export function rsi(data: number[], period = 14): (number | null)[] {
   return out
 }
 
+/**
+ * ATR（Average True Range，Wilder 平滑）。前 period 个位置为 null。
+ * TR = max(high-low, |high-prevClose|, |low-prevClose|)，prevClose 取前一收盘价（含跳空）。
+ */
+export function atr(
+  high: number[],
+  low: number[],
+  close: number[],
+  period = 14,
+): (number | null)[] {
+  const n = Math.min(high.length, low.length, close.length)
+  const out: (number | null)[] = new Array(n).fill(null)
+  if (n <= period) return out
+  const tr = (i: number) =>
+    Math.max(
+      high[i] - low[i],
+      Math.abs(high[i] - close[i - 1]),
+      Math.abs(low[i] - close[i - 1]),
+    )
+  let sum = 0
+  for (let i = 1; i <= period; i++) sum += tr(i)
+  let prev = sum / period
+  out[period] = prev
+  for (let i = period + 1; i < n; i++) {
+    prev = (prev * (period - 1) + tr(i)) / period // Wilder 平滑，同 rsi
+    out[i] = prev
+  }
+  return out
+}
+
 export interface BollingerBands {
   upper: (number | null)[]
   middle: (number | null)[]

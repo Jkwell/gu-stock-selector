@@ -5,6 +5,7 @@ import { computeMarketSentiment, type MarketSentiment } from '../engine/marketSe
 import { computeConceptHeat, computeSectorHeat, type SectorHeat } from '../engine/sectorHeat'
 import { computeMarketTiming, type MarketTiming } from '../engine/marketTiming'
 import { positionAdvice } from '../engine/positionAdvice'
+import { computePersistence, loadSnapshot, saveSnapshot, todayKey } from '../engine/heatHistory'
 
 type HeatTab = 'sector' | 'concept'
 
@@ -13,6 +14,8 @@ export default function MarketPanel() {
   const [sentiment, setSentiment] = useState<MarketSentiment | null>(null)
   const [sectors, setSectors] = useState<SectorHeat[]>([])
   const [concepts, setConcepts] = useState<SectorHeat[]>([])
+  const [sectorDays, setSectorDays] = useState<Record<string, number>>({})
+  const [conceptDays, setConceptDays] = useState<Record<string, number>>({})
   const [heatTab, setHeatTab] = useState<HeatTab>('concept') // 默认概念榜（短线更相关）
   const [timings, setTimings] = useState<MarketTiming[]>([])
   const [loading, setLoading] = useState(true)
@@ -24,8 +27,18 @@ export default function MarketPanel() {
     try {
       const stocks = await fetchMarketStocks()
       setSentiment(computeMarketSentiment(stocks))
-      setSectors(computeSectorHeat(stocks, 12))
-      setConcepts(computeConceptHeat(stocks, 12))
+      const sectorsNow = computeSectorHeat(stocks, 12)
+      const conceptsNow = computeConceptHeat(stocks, 12)
+      setSectors(sectorsNow)
+      setConcepts(conceptsNow)
+      // 板块持续性：跨交易日累计上榜天数（区分单日脉冲 vs 持续主线）
+      const today = todayKey()
+      const sectorSnap = computePersistence(sectorsNow, loadSnapshot('heat-history-sector'), today)
+      saveSnapshot(sectorSnap, 'heat-history-sector')
+      setSectorDays(Object.fromEntries(Object.entries(sectorSnap.sectors).map(([k, v]) => [k, v.days])))
+      const conceptSnap = computePersistence(conceptsNow, loadSnapshot('heat-history-concept'), today)
+      saveSnapshot(conceptSnap, 'heat-history-concept')
+      setConceptDays(Object.fromEntries(Object.entries(conceptSnap.sectors).map(([k, v]) => [k, v.days])))
       // 大盘择时：上证 + 深成指
       const idxList: Array<[string, string, string]> = [
         ['sh', '000001', '上证指数'],
@@ -185,6 +198,7 @@ export default function MarketPanel() {
                   <th>平均涨幅</th>
                   <th>涨停</th>
                   <th>上涨占比</th>
+                  <th>持续</th>
                   <th style={{ textAlign: 'left' }}>领涨股</th>
                 </tr>
               </thead>
@@ -202,6 +216,14 @@ export default function MarketPanel() {
                     </td>
                     <td className={s.limitUpCount > 0 ? 'up' : ''}>{s.limitUpCount}</td>
                     <td>{(s.upRatio * 100).toFixed(0)}%</td>
+                    <td>
+                      {(() => {
+                        const days = (heatTab === 'concept' ? conceptDays : sectorDays)[s.sector] ?? 1
+                        if (days >= 3) return <span className="up">🔥 {days}天</span>
+                        if (days === 2) return `${days}天`
+                        return <span className="muted">首日</span>
+                      })()}
+                    </td>
                     <td className="name" style={{ textAlign: 'left', fontSize: 12 }}>
                       {s.leaders.join('、')}
                     </td>
