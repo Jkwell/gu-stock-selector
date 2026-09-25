@@ -1,0 +1,425 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { StockScore } from '../types'
+import { fetchRealtimeQuotes, type Quote } from '../data/api'
+import { addPosition, getPositions, removePosition, type Position } from '../data/positions'
+import { addTrade, getTrades, type TradeRecord } from '../data/trades'
+
+interface Props {
+  onSelect: (stock: StockScore) => void
+}
+
+const REFRESH_MS = 10000
+
+/** 计算持仓交易日天数（基于买入日期，粗略估算，排除周末） */
+function calculateTradingDays(buyDate: string): number {
+  const buy = new Date(buyDate)
+  const now = new Date()
+  const diffTime = now.getTime() - buy.getTime()
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+  // 粗略估算：排除周末（每7天有5个交易日）
+  const tradingDays = Math.floor(diffDays * 5 / 7)
+  return Math.max(1, tradingDays)
+}
+
+export default function PositionPanel({ onSelect }: Props) {
+  const [positions, setPositions] = useState<Position[]>(() => getPositions())
+  const [trades, setTrades] = useState<TradeRecord[]>(() => getTrades())
+  const [quotes, setQuotes] = useState<Map<string, Quote>>(new Map())
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  // 添加表单
+  const [code, setCode] = useState('')
+  const [buyPrice, setBuyPrice] = useState('')
+  const [shares, setShares] = useState('100')
+  const [stopLoss, setStopLoss] = useState('')
+  const [adding, setAdding] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const refresh = useCallback(async () => {
+    const codes = getPositions().map((p) => p.code)
+    if (codes.length === 0) return
+    try {
+      const qs = await fetchRealtimeQuotes(codes)
+      setQuotes(new Map(qs.map((q) => [q.code, q])))
+      setLastUpdated(new Date().toLocaleTimeString('zh-CN'))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    timerRef.current = setInterval(() => void refresh(), REFRESH_MS)
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [refresh])
+
+  const handleAdd = async () => {
+    const c = code.trim()
+    const bp = Number(buyPrice)
+    if (!/^\d{6}$/.test(c) || !Number.isFinite(bp) || bp <= 0) return
+    setAdding(true)
+    try {
+      // 拉名称
+      const qs = await fetchRealtimeQuotes([c])
+      const name = qs[0]?.name?.replace(/\s/g, '') || c
+      addPosition({
+        code: c,
+        name,
+        buyPrice: bp,
+        shares: Math.max(1, Number(shares) || 100),
+        buyDate: new Date().toISOString().slice(0, 10),
+        stopLoss: Number(stopLoss) > 0 ? Number(stopLoss) : undefined,
+      })
+      setPositions(getPositions())
+      setCode('')
+      setBuyPrice('')
+      setStopLoss('')
+      void refresh()
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const handleRemove = (c: string) => {
+    const pos = getPositions().find((p) => p.code === c)
+    removePosition(c)
+    setPositions(getPositions())
+    // 卖出闭环：按现价记录一笔实际交易
+    if (pos) {
+      const q = quotes.get(c)
+      const sellPrice = q?.price
+      if (sellPrice !== undefined && sellPrice > 0) {
+        addTrade({
+          code: pos.code,
+          name: pos.name,
+          buyPrice: pos.buyPrice,
+          shares: pos.shares,
+          buyDate: pos.buyDate,
+          sellPrice,
+        })
+        setTrades(getTrades())
+        alert(`已卖出 ${pos.name} @ ¥${sellPrice.toFixed(2)}，交易已记入「📋 复盘」`)
+      } else {
+        alert('暂无实时价，已移除持仓但未记录交易盈亏')
+      }
+    }
+  }
+
+  // 总市值/盈亏
+  let totalCost = 0
+  let totalValue = 0
+  const day6Positions: Position[] = [] // 第6天的持仓
+  const overDuePositions: Position[] = [] // 超过6天的持仓
+
+  for (const p of positions) {
+    const q = quotes.get(p.code)
+    totalCost += p.buyPrice * p.shares
+    if (q?.price !== undefined) totalValue += q.price * p.shares
+
+    // 计算持仓天数
+    const holdingDays = calculateTradingDays(p.buyDate)
+    if (holdingDays === 6) {
+      day6Positions.push(p)
+    } else if (holdingDays > 6) {
+      overDuePositions.push(p)
+    }
+  }
+  const totalPnl = totalValue - totalCost
+  const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
+
+  // 批量清仓第6天的持仓
+  const handleBatchSell = () => {
+    const toBeSold = [...day6Positions, ...overDuePositions]
+    if (toBeSold.length === 0) {
+      alert('没有需要清仓的持仓（第6天或超期）')
+      return
+    }
+    if (!confirm(`确定要清仓 ${toBeSold.length} 只持仓吗？`)) return
+
+    toBeSold.forEach(p => {
+      const q = quotes.get(p.code)
+      const sellPrice = q?.price
+      if (sellPrice !== undefined && sellPrice > 0) {
+        addTrade({
+          code: p.code,
+          name: p.name,
+          buyPrice: p.buyPrice,
+          shares: p.shares,
+          buyDate: p.buyDate,
+          sellPrice,
+        })
+      }
+      removePosition(p.code)
+    })
+    setPositions(getPositions())
+    setTrades(getTrades())
+    alert(`已批量清仓 ${toBeSold.length} 只，交易已记入「📋 复盘」`)
+  }
+
+  return (
+    <div className="config-panel">
+      <section className="card">
+        <div className="watch-header">
+          <h3 style={{ margin: 0 }}>💰 模拟持仓（{positions.length} 只）</h3>
+          <div className="toolbar-actions">
+            <span className="muted">
+              {lastUpdated ? `更新于 ${lastUpdated}` : ''} · 每 10 秒刷新
+            </span>
+            {(day6Positions.length > 0 || overDuePositions.length > 0) && (
+              <button className="btn btn-sm btn-warning" onClick={handleBatchSell}>
+                🔔 批量清仓 ({day6Positions.length + overDuePositions.length}只)
+              </button>
+            )}
+            <button className="btn btn-sm" onClick={() => void refresh()}>
+              🔄 刷新
+            </button>
+          </div>
+        </div>
+
+        {(day6Positions.length > 0 || overDuePositions.length > 0) && (
+          <div className="holding-alert">
+            <span className="alert-icon">🔔</span>
+            <div className="alert-content">
+              <strong>持仓到期提醒</strong>
+              <p>
+                {day6Positions.length > 0 && `${day6Positions.length}只已持有6天（建议今日清仓）`}
+                {day6Positions.length > 0 && overDuePositions.length > 0 && '，'}
+                {overDuePositions.length > 0 && `${overDuePositions.length}只已超过6天（建议尽快清仓）`}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {positions.length > 0 && (
+          <div className="metric-grid">
+            <div className="metric-card">
+              <span className="metric-label">总成本</span>
+              <span className="metric-value">¥{totalCost.toFixed(0)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">总市值</span>
+              <span className="metric-value">¥{totalValue.toFixed(0)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">总盈亏</span>
+              <span className={`metric-value ${totalPnl >= 0 ? 'up' : 'down'}`}>
+                {totalPnl >= 0 ? '+' : ''}¥{totalPnl.toFixed(0)}
+              </span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">盈亏率</span>
+              <span className={`metric-value ${totalPnlPct >= 0 ? 'up' : 'down'}`}>
+                {totalPnlPct >= 0 ? '+' : ''}
+                {totalPnlPct.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="watch-add-row" style={{ marginTop: 12 }}>
+          <input
+            type="text"
+            className="watch-add-input" style={{ maxWidth: 100 }}
+            placeholder="代码"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <input
+            type="number"
+            className="watch-add-input" style={{ maxWidth: 100 }}
+            placeholder="买入价"
+            value={buyPrice}
+            onChange={(e) => setBuyPrice(e.target.value)}
+          />
+          <input
+            type="number"
+            className="watch-add-input" style={{ maxWidth: 90 }}
+            placeholder="股数"
+            value={shares}
+            onChange={(e) => setShares(e.target.value)}
+          />
+          <input
+            type="number"
+            className="watch-add-input" style={{ maxWidth: 100 }}
+            placeholder="止损(可选)"
+            value={stopLoss}
+            onChange={(e) => setStopLoss(e.target.value)}
+          />
+          <button className="btn" onClick={() => void handleAdd()} disabled={adding}>
+            {adding ? '添加中…' : '+ 记录'}
+          </button>
+        </div>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
+          💡 持仓天数为估算值（排除周末，不含节假日），仅供参考。建议第6天清仓。
+        </p>
+      </section>
+
+      {positions.length === 0 ? (
+        <div className="card muted" style={{ textAlign: 'center', padding: 40 }}>
+          暂无持仓。输入代码 + 买入价，记录你的模拟持仓。
+        </div>
+      ) : (
+        <section className="card">
+          <div className="table-wrap" style={{ maxHeight: 'none' }}>
+            <table className="result-table">
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>代码</th>
+                  <th style={{ textAlign: 'left' }}>名称</th>
+                  <th>买入价</th>
+                  <th>现价</th>
+                  <th>股数</th>
+                  <th>持仓天数</th>
+                  <th>盈亏</th>
+                  <th>盈亏率</th>
+                  <th>状态</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map((p) => {
+                  const q = quotes.get(p.code)
+                  const price = q?.price
+                  const pnl = price !== undefined ? (price - p.buyPrice) * p.shares : null
+                  const pct = price !== undefined ? (price / p.buyPrice - 1) * 100 : null
+                  const hitSL = price !== undefined && p.stopLoss !== undefined && price <= p.stopLoss
+                  const holdingDays = calculateTradingDays(p.buyDate)
+                  const isDay6 = holdingDays === 6
+                  const isOverDue = holdingDays > 6
+
+                  return (
+                    <tr
+                      key={p.code}
+                      className={`position-row ${isDay6 ? 'row-day-6' : isOverDue ? 'row-overdue' : ''}`}
+                      onClick={() =>
+                        onSelect({
+                          code: p.code,
+                          name: p.name,
+                          market: p.code.startsWith('6') ? 'sh' : 'sz',
+                          totalScore: 0,
+                          factorScores: [],
+                        })
+                      }
+                    >
+                      <td className="code">{p.code}</td>
+                      <td className="name" style={{ textAlign: 'left' }}>{p.name}</td>
+                      <td>{p.buyPrice.toFixed(2)}</td>
+                      <td>{price !== undefined ? price.toFixed(2) : '—'}</td>
+                      <td>{p.shares}</td>
+                      <td>
+                        <span className={`holding-days-cell ${isDay6 ? 'day-6' : isOverDue ? 'overdue' : ''}`}>
+                          {isDay6 ? '🔔 第6天' : isOverDue ? `超期${holdingDays}天` : `${holdingDays}天`}
+                        </span>
+                      </td>
+                      <td className={pnl !== null && pnl >= 0 ? 'up' : 'down'}>
+                        {pnl !== null ? `${pnl >= 0 ? '+' : ''}¥${pnl.toFixed(0)}` : '—'}
+                      </td>
+                      <td className={pct !== null && pct >= 0 ? 'up' : 'down'}>
+                        {pct !== null ? `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}
+                      </td>
+                      <td>
+                        {hitSL ? (
+                          <span className="score-pill bad">跌破止损</span>
+                        ) : isDay6 ? (
+                          <span className="score-pill warn">建议清仓</span>
+                        ) : isOverDue ? (
+                          <span className="score-pill bad">已超期</span>
+                        ) : (
+                          <span className="score-pill mid">持有中</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="watch-remove"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRemove(p.code)
+                          }}
+                        >
+                          卖出
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* 已完成交易（卖出闭环） */}
+      {trades.length > 0 && (
+        <section className="card" style={{ marginTop: 14 }}>
+          <div className="watch-header">
+            <h3 style={{ margin: 0 }}>📋 已完成交易（{trades.length} 笔）</h3>
+          </div>
+          {(() => {
+            let winCount = 0
+            let sumPct = 0
+            let sumPnl = 0
+            for (const t of trades) {
+              if (t.pnl > 0) winCount++
+              sumPct += t.pnlPct
+              sumPnl += t.pnl
+            }
+            const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
+            return (
+              <div className="metric-grid">
+                <div className="metric-card">
+                  <span className="metric-label">胜率</span>
+                  <span className="metric-value">{winRate.toFixed(1)}%</span>
+                </div>
+                <div className="metric-card">
+                  <span className="metric-label">累计盈亏</span>
+                  <span className={`metric-value ${sumPnl >= 0 ? 'up' : 'down'}`}>
+                    {sumPnl >= 0 ? '+' : ''}¥{sumPnl.toFixed(0)}
+                  </span>
+                </div>
+                <div className="metric-card">
+                  <span className="metric-label">平均盈亏率</span>
+                  <span className={`metric-value ${sumPct >= 0 ? 'up' : 'down'}`}>
+                    {sumPct >= 0 ? '+' : ''}{sumPct.toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
+          <div className="table-wrap" style={{ maxHeight: 'none', marginTop: 10 }}>
+            <table className="result-table">
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>代码</th>
+                  <th style={{ textAlign: 'left' }}>名称</th>
+                  <th>买入</th>
+                  <th>卖出</th>
+                  <th>股数</th>
+                  <th>盈亏</th>
+                  <th>盈亏率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trades.map((t, i) => (
+                  <tr key={i}>
+                    <td className="code">{t.code}</td>
+                    <td className="name" style={{ textAlign: 'left' }}>{t.name}</td>
+                    <td>{t.buyPrice.toFixed(2)}</td>
+                    <td>{t.sellPrice.toFixed(2)}</td>
+                    <td>{t.shares}</td>
+                    <td className={t.pnl >= 0 ? 'up' : 'down'}>
+                      {t.pnl >= 0 ? '+' : ''}¥{t.pnl.toFixed(0)}
+                    </td>
+                    <td className={t.pnlPct >= 0 ? 'up' : 'down'}>
+                      {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# build output (deployed separately to gh-pages)
+dist/
+
+# local tools / temp
+.tools/
+*.log
+
+# secrets
+.env
+ai-server/.env
+**/.env
+
+# python
+__pycache__/
+*.pyc

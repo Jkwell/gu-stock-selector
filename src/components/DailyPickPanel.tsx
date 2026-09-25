@@ -1,0 +1,497 @@
+import { useEffect, useMemo, useState } from 'react'
+import type { DailyPickResult, SelectConfig, StockScore } from '../types'
+import { fetchMarketStocks, fetchSectorList, runDailyPick, runBestPick, type PipelineProgress } from '../data/pipeline'
+import { fetchKline, fetchIndexQuote } from '../data/api'
+import { computeIndexTrend, type IndexTrend } from '../engine/marketSentiment'
+import { STRATEGY_TEMPLATES, applyTemplate } from '../config/factors'
+import { computeMarketSentiment, type MarketSentiment } from '../engine/marketSentiment'
+import { positionAdvice } from '../engine/positionAdvice'
+import { addToWatchlist, watchItemFrom } from '../data/watchlist'
+import { recordFromPicks, savePickRecord, toLocalDateString } from '../data/records'
+import StrategyGuideModal from './StrategyGuideModal'
+import type { DailyPick } from '../types'
+import { analyzePortfolio, type PortfolioView } from '../engine/portfolioView'
+
+interface Props {
+  config: SelectConfig
+  onSelect: (stock: StockScore) => void
+}
+
+/** 判断当前是否为尾盘时段 */
+function tailStatus(): { isTail: boolean; text: string } {
+  const now = new Date()
+  const h = now.getHours()
+  const m = now.getMinutes()
+  const isTail = (h === 14 && m >= 30) || (h === 14 && m <= 59) || h === 15
+  const hh = String(h).padStart(2, '0')
+  const mm = String(m).padStart(2, '0')
+  if (isTail) {
+    return { isTail: true, text: `当前 ${hh}:${mm} · 尾盘时段，数据实时，可收盘前下单` }
+  }
+  return {
+    isTail: false,
+    text: `当前 ${hh}:${mm} · 建议尾盘 14:45-14:55 运行，此时数据实时且可下单`,
+  }
+}
+
+export default function DailyPickPanel({ config, onSelect }: Props) {
+  const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState<PipelineProgress | null>(null)
+  const [result, setResult] = useState<DailyPickResult | null>(() => {
+    // 从 localStorage 恢复今天的推荐结果
+    try {
+      const today = toLocalDateString(new Date())
+      const saved = localStorage.getItem(`daily-pick-${today}`)
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+  const [error, setError] = useState<string | null>(null)
+  const [templateKey, setTemplateKey] = useState('shrink_surge') // 默认缩量蓄势突破（回测最优策略）
+  const [sentiment, setSentiment] = useState<MarketSentiment | null>(null)
+  const [indexTrend, setIndexTrend] = useState<IndexTrend | null>(null)
+  const [sector, setSector] = useState('all') // 板块过滤
+  const [sectors, setSectors] = useState<string[]>([])
+  const [showGuide, setShowGuide] = useState(false)
+  const [requireUptrend, setRequireUptrend] = useState(true) // 温和放量：是否要求上升趋势
+  const [singleMode, setSingleMode] = useState(false) // 精选1只模式
+
+  // 加载行业列表（板块下拉）
+  useEffect(() => {
+    let cancelled = false
+    fetchSectorList()
+      .then((list) => {
+        if (!cancelled) setSectors(list)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 加载市场情绪（决定今天做不做）
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const stocks = await fetchMarketStocks()
+        if (!cancelled) setSentiment(computeMarketSentiment(stocks))
+      } catch {
+        // 情绪数据失败不影响主流程
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 加载大盘趋势（上证指数 + 实时价），每30秒刷新
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [kline, quote] = await Promise.all([
+          fetchKline('sh', '000001', 60),
+          fetchIndexQuote('sh000001'),
+        ])
+        if (!cancelled && kline.length > 0) {
+          setIndexTrend(computeIndexTrend(kline, quote?.price))
+        }
+      } catch {
+        // 大盘数据失败不影响主流程
+      }
+    }
+    void load()
+    const timer = setInterval(() => void load(), 30000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [])
+
+  const activeTemplate =
+    STRATEGY_TEMPLATES.find((t) => t.key === templateKey) ?? STRATEGY_TEMPLATES[0]
+
+  const run = async () => {
+    setRunning(true)
+    setError(null)
+    setResult(null)
+    try {
+      // 用选中的策略模板覆盖 config + 板块过滤 + 上升趋势开关
+      const pickConfig = {
+        ...applyTemplate(activeTemplate, config),
+        sector,
+        requireUptrend,
+      }
+      const r = singleMode
+        ? await runBestPick(pickConfig, { onProgress: setProgress, concurrency: 8 })
+        : await runDailyPick(pickConfig, { onProgress: setProgress, concurrency: 8 })
+      setResult(r)
+
+      // 持久化今天的推荐结果到 localStorage
+      try {
+        const today = toLocalDateString(new Date())
+        localStorage.setItem(`daily-pick-${today}`, JSON.stringify(r))
+      } catch {
+        // 保存失败不影响主流程
+      }
+
+      // 自动把推荐的 5 只票加入监控（含买卖点）+ 存档复盘
+      if (r.picks.length > 0) {
+        r.picks.forEach((p) =>
+          addToWatchlist(
+            watchItemFrom(p.code, p.name, {
+              buyLow: p.buyLow,
+              buyHigh: p.buyHigh,
+              takeProfit: p.takeProfit,
+              stopLoss: p.stopLoss,
+              totalScore: p.totalScore,
+            }),
+          ),
+        )
+        savePickRecord(
+          recordFromPicks(toLocalDateString(new Date()), r.picks, {
+            key: activeTemplate.key,
+            name: activeTemplate.name,
+          }),
+        )
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+      setProgress(null)
+    }
+  }
+
+  const status = tailStatus()
+
+  return (
+    <div className="config-panel">
+      <section className="card">
+        <h3>🎯 今日推荐{singleMode ? '（精选最优 1 只）' : '（5 只 + 买卖点）'}</h3>
+        <p className={`tail-hint ${status.isTail ? 'tail-active' : ''}`}>{status.text}</p>
+
+        {/* 市场情绪提示 */}
+        {sentiment && (
+          <div
+            className={`sentiment-strip ${
+              sentiment.level === 'hot'
+                ? 'level-hot'
+                : sentiment.level === 'cold'
+                  ? 'level-cold'
+                  : 'level-neutral'
+            }`}
+          >
+            <span className="sentiment-icon">
+              {sentiment.level === 'hot' ? '🔥' : sentiment.level === 'cold' ? '🧊' : '😐'}
+            </span>
+            <span>
+              情绪 {sentiment.temperature}° · 涨停 {sentiment.limitUpCount} 家 ·{' '}
+              {sentiment.advice}
+            </span>
+            <span className="position-advice-tag">
+              {positionAdvice(sentiment.temperature).text}
+            </span>
+          </div>
+        )}
+
+        {/* 大盘趋势（决定今天做不做） */}
+        {indexTrend && (
+          <div className={`index-trend-strip trend-${indexTrend.level}`}>
+            <span className="index-trend-icon">
+              {indexTrend.level === 'strong-up' ? '🚀' : indexTrend.level === 'up' ? '📈' : indexTrend.level === 'weak-up' ? '↗️' : indexTrend.level === 'down' ? '📉' : '➡️'}
+            </span>
+            <span className="index-trend-main">
+              大盘（上证）<b>{indexTrend.desc}</b> · 现 {indexTrend.close} · 20日{' '}
+              <b className={indexTrend.return20 >= 0 ? 'up' : 'down'}>
+                {indexTrend.return20 >= 0 ? '+' : ''}{indexTrend.return20}%
+              </b>
+              {' '}· 5日{' '}
+              <b className={indexTrend.return5 >= 0 ? 'up' : 'down'}>
+                {indexTrend.return5 >= 0 ? '+' : ''}{indexTrend.return5}%
+              </b>
+            </span>
+            <span className={`index-trend-badge ${indexTrend.canTrade ? 'ok' : 'no'}`}>
+              {indexTrend.canTrade ? `✅ ${indexTrend.position}` : `⛔ ${indexTrend.position}`}
+            </span>
+          </div>
+        )}
+
+        {/* 策略选择 */}
+        <div className="strategy-select">
+          <span className="field-label">选股策略：</span>
+          {STRATEGY_TEMPLATES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              className={`strategy-chip ${templateKey === t.key ? 'active' : ''}`}
+              onClick={() => setTemplateKey(t.key)}
+              title={t.desc}
+            >
+              {t.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="guide-btn"
+            onClick={() => setShowGuide(true)}
+            title="查看每个策略和因子的详细说明"
+          >
+            📖 策略说明
+          </button>
+        </div>
+
+        {/* 板块过滤 */}
+        <div className="strategy-select" style={{ marginTop: 8 }}>
+          <span className="field-label">板块：</span>
+          <select
+            className="sector-dropdown"
+            value={sector}
+            onChange={(e) => setSector(e.target.value)}
+          >
+            <option value="all">🌐 全部板块</option>
+            {sectors.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 温和放量：上升趋势开关（同花顺风格宽松放量可选） */}
+        {templateKey === 'gentle_volume' && (
+          <div className="strategy-select" style={{ marginTop: 8 }}>
+            <label className="uptrend-toggle">
+              <input
+                type="checkbox"
+                checked={requireUptrend}
+                onChange={(e) => setRequireUptrend(e.target.checked)}
+              />
+              要求上升趋势（MA20&gt;MA60 + 站上MA20 + MA20拐头）— 关闭后为同花顺式宽松放量
+            </label>
+          </div>
+        )}
+
+        {/* 精选1只开关 */}
+        <div className="strategy-select" style={{ marginTop: 8 }}>
+          <label className="uptrend-toggle">
+            <input
+              type="checkbox"
+              checked={singleMode}
+              onChange={(e) => setSingleMode(e.target.checked)}
+            />
+            🎯 只买1只（全市场扫描，帮我选最优的1只）
+          </label>
+        </div>
+
+        <p className="muted" style={{ margin: '8px 0 12px' }}>
+          {singleMode
+            ? `${activeTemplate.desc}。全市场扫描后按综合评分（质量+性价比+买入时机）选出唯一最优标的。`
+            : `${activeTemplate.desc}。打分选 Top 5（行业分散），基于均线/前期高低点给出买入区间、止盈、止损。`}
+          买卖点仅供参考，不构成投资建议。
+        </p>
+        <div className="btn-row">
+          <button className="btn btn-primary" onClick={() => void run()} disabled={running}>
+            {running ? '生成中…' : singleMode ? '🎯 精选最优1只' : '🚀 生成今日推荐'}
+          </button>
+        </div>
+      </section>
+
+      {error && <div className="error-banner">⚠️ {error}</div>}
+
+      {running && progress && (
+        <div className="progress-bar-wrap">
+          <div className="progress-label">
+            <span>{progress.message}</span>
+            <span>{progress.total > 0 ? `${progress.done}/${progress.total}` : ''}</span>
+          </div>
+          <div className="progress-track">
+            <div
+              className="progress-fill"
+              style={{
+                width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 30}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {result && (
+        <>
+          <div className="pick-summary muted">
+            生成时间：{new Date(result.computedAt).toLocaleTimeString('zh-CN')} · 共{' '}
+            {result.picks.length} 只
+          </div>
+          {result.gateReason && result.picks.length > 0 && (
+            <div className="pick-summary muted">筛选说明：{result.gateReason}</div>
+          )}
+          <div className="pick-grid">
+            {result.picks.map((p, i) => (
+              <PickCard key={p.code} pick={p} rank={i + 1} onSelect={onSelect} />
+            ))}
+          </div>
+          {result.picks.length >= 2 &&
+            result.picks.some((p) => p.industry || p.concept) && (
+              <PortfolioViewCard picks={result.picks} />
+            )}
+          {result.picks.length === 0 && (
+            <div className="error-banner">
+              ⚠️ {result.gateReason ?? '未选出符合条件的股票，请稍后重试'}
+            </div>
+          )}
+        </>
+      )}
+
+      {showGuide && <StrategyGuideModal onClose={() => setShowGuide(false)} />}
+    </div>
+  )
+}
+
+/** 组合透视卡片：行业/概念重叠度 + 组合风险建议 */
+function PortfolioViewCard({ picks }: { picks: DailyPick[] }) {
+  const view: PortfolioView = useMemo(() => analyzePortfolio(picks), [picks])
+  const riskIcon = view.riskLevel === 'high' ? '🔴' : view.riskLevel === 'medium' ? '🟡' : '🟢'
+  const riskText =
+    view.riskLevel === 'high' ? '高度集中' : view.riskLevel === 'medium' ? '中等集中' : '分散良好'
+  return (
+    <section className="card portfolio-view">
+      <h3>📊 组合透视</h3>
+      <div className="pv-row">
+        <span className="pv-label">行业分布</span>
+        <div className="pv-tags">
+          {view.industryGroups.map((g) => (
+            <span
+              key={g.industry}
+              className={`pv-tag ${g.count >= 2 && g.industry !== '未知' ? 'pv-tag-hot' : ''}`}
+              title={g.names.join('、')}
+            >
+              {g.industry} ×{g.count}
+            </span>
+          ))}
+        </div>
+      </div>
+      {view.sharedConcepts.length > 0 && (
+        <div className="pv-row">
+          <span className="pv-label">概念扎堆</span>
+          <div className="pv-tags">
+            {view.sharedConcepts.map((c) => (
+              <span key={c.concept} className="pv-tag pv-tag-hot" title={c.names.join('、')}>
+                {c.concept} ×{c.count}（{c.names.join('、')}）
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className={`pv-risk pv-risk-${view.riskLevel}`}>
+        {riskIcon} 组合风险：{riskText}
+      </div>
+      <p className="pv-advice">{view.advice}</p>
+    </section>
+  )
+}
+
+/** 单只推荐卡片 */
+function PickCard({
+  pick,
+  rank,
+  onSelect,
+}: {
+  pick: DailyPick
+  rank: number
+  onSelect: (s: StockScore) => void
+}) {
+  const changeCls = (pick.changePct ?? 0) >= 0 ? 'up' : 'down'
+  const rrCls = pick.riskReward >= 1.5 ? 'good' : pick.riskReward >= 0.8 ? 'mid' : 'bad'
+  const rrText =
+    pick.riskReward >= 2
+      ? '性价比优'
+      : pick.riskReward >= 1
+        ? '性价比适中'
+        : '性价比偏低'
+
+  return (
+    <div
+      className="pick-card"
+      onClick={() =>
+        onSelect({
+          code: pick.code,
+          name: pick.name,
+          market: pick.market,
+          industry: pick.industry,
+          concept: pick.concept,
+          totalScore: pick.totalScore,
+          price: pick.price,
+          changePct: pick.changePct,
+          totalMv: pick.totalMv,
+          floatMv: pick.floatMv,
+          pe: pick.pe,
+          pb: pick.pb,
+          turnoverRate: pick.turnoverRate,
+          factorScores: pick.factorScores,
+        })
+      }
+    >
+      <div className="pick-card-head">
+        <span className="pick-rank">#{rank}</span>
+        <div className="pick-title">
+          <span className="pick-name">{pick.name}</span>
+          <span className="pick-code">{pick.code}</span>
+          {pick.concept && <span className="pick-concept">{pick.concept}</span>}
+          {pick.industry && <span className="pick-industry">{pick.industry}</span>}
+          {pick.oneWord && <span className="one-word-badge">⚠️ 一字板买不进</span>}
+          {pick.highRisk && <span className="one-word-badge">🔴 高位风险</span>}
+        </div>
+        <div className="pick-price">
+          <div className="pick-price-val">¥{pick.price?.toFixed(2)}</div>
+          <div className={`pick-change ${changeCls}`}>
+            {pick.changePct !== undefined
+              ? `${pick.changePct >= 0 ? '+' : ''}${pick.changePct.toFixed(2)}%`
+              : '—'}
+          </div>
+        </div>
+      </div>
+
+      <div className="pick-score-row">
+        <span className="pick-score-label">综合评分</span>
+        <strong className="pick-score-val">{pick.totalScore.toFixed(1)}</strong>
+        <span className={`score-pill ${rrCls}`}>风险回报 {pick.riskReward} · {rrText}</span>
+      </div>
+
+      <div className="price-targets">
+        <div className="target target-buy">
+          <span className="target-label">买入区间</span>
+          <span className="target-val">
+            {pick.buyLow.toFixed(2)} ~ {pick.buyHigh.toFixed(2)}
+          </span>
+        </div>
+        <div className="target target-profit">
+          <span className="target-label">止盈目标</span>
+          <span className="target-val">{pick.takeProfit.toFixed(2)}</span>
+        </div>
+        <div className="target target-stop">
+          <span className="target-label">止损价</span>
+          <span className="target-val">{pick.stopLoss.toFixed(2)}</span>
+        </div>
+      </div>
+
+      <ul className="pick-reasons">
+        {pick.reasons.map((r, i) => (
+          <li key={i}>{r}</li>
+        ))}
+      </ul>
+
+      <div className="pick-factor-tags">
+        {pick.factorScores
+          .filter((f) => f.score >= 60)
+          .slice(0, 4)
+          .map((f) => (
+            <span key={f.key} className="factor-tag">
+              {f.name} {f.score.toFixed(0)}
+            </span>
+          ))}
+      </div>
+    </div>
+  )
+}
