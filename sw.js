@@ -6,7 +6,7 @@
  * 部署路径自适应：GitHub Pages 子路径（/仓库名/）或自定义域名根路径均可用
  */
 
-const CACHE_NAME = 'stock-selector-v2'
+const CACHE_NAME = 'stock-selector-v3'
 // 注册作用域（如 https://user.github.io/repo/），strip 末尾斜杠后拼绝对路径
 const SCOPE = new URL(self.registration.scope).pathname.replace(/\/$/, '')
 const STATIC_ASSETS = [
