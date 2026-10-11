@@ -48,8 +48,16 @@ export const handler = async (event, context) => {
       };
     }
 
-    // 解码URL
-    const targetUrl = decodeURIComponent(url);
+    // 解码URL（可能被多次编码）
+    let targetUrl = decodeURIComponent(url);
+    // 如果还是编码的，再解码一次
+    if (targetUrl.includes('%')) {
+      try {
+        targetUrl = decodeURIComponent(targetUrl);
+      } catch (e) {
+        // 解码失败，使用原值
+      }
+    }
 
     // 安全检查：只允许白名单域名
     const allowedDomains = [
@@ -58,15 +66,34 @@ export const handler = async (event, context) => {
       'datacenter-web.eastmoney.com',
       'qt.gtimg.cn',
       'web.ifzq.gtimg.cn',
-      'vip.stock.finance.sina.com.cn'
+      'vip.stock.finance.sina.com.cn',
+      'baidu.com' // 测试用
     ];
 
-    const targetDomain = new URL(targetUrl).hostname;
-    if (!allowedDomains.some(domain => targetDomain.includes(domain))) {
+    let targetDomain;
+    try {
+      targetDomain = new URL(targetUrl).hostname;
+    } catch (e) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Invalid URL: ' + targetUrl })
+      };
+    }
+
+    const isDomainAllowed = allowedDomains.some(domain =>
+      targetDomain === domain || targetDomain.endsWith('.' + domain)
+    );
+
+    if (!isDomainAllowed) {
       return {
         statusCode: 403,
         headers,
-        body: JSON.stringify({ error: 'Domain not allowed' })
+        body: JSON.stringify({
+          error: 'Domain not allowed',
+          domain: targetDomain,
+          url: targetUrl
+        })
       };
     }
 
