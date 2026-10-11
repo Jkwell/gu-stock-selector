@@ -42,9 +42,10 @@ const isDev = () => {
 const needsProxy = () => {
   if (isDev()) return false // 本地开发不需要
   if (typeof window === 'undefined') return false // Node环境不需要
-  // GitHub Pages需要代理（东财JSONP被阻止）
+  // GitHub Pages/Vercel/Netlify需要代理（东财JSONP被阻止）
   return window.location.hostname.includes('github.io') ||
-         window.location.hostname.includes('vercel.app')
+         window.location.hostname.includes('vercel.app') ||
+         window.location.hostname.includes('netlify.app')
 }
 
 /** 构造代理URL */
