@@ -21,8 +21,9 @@ const EM_CLIST = 'https://push2.eastmoney.com/api/qt/clist/get'
 const EM_FFLOW = 'https://push2.eastmoney.com/api/qt/stock/fflow/kline/get'
 const EM_FFLOW_HIS = 'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
 const EM_DATA = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
+// ⚠️ 新浪接口在HTTPS页面不可用（HTTP协议被浏览器阻止），仅本地开发通过代理使用
 const SINA_LIST =
-  'http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
+  'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
@@ -35,6 +36,21 @@ const isDev = () => {
   } catch {
     return false // tsx 脚本等无 Vite env 环境 → 走直连
   }
+}
+
+/** 判断是否需要使用代理（生产环境+非localhost） */
+const needsProxy = () => {
+  if (isDev()) return false // 本地开发不需要
+  if (typeof window === 'undefined') return false // Node环境不需要
+  // GitHub Pages需要代理（东财JSONP被阻止）
+  return window.location.hostname.includes('github.io') ||
+         window.location.hostname.includes('vercel.app')
+}
+
+/** 构造代理URL */
+const proxyUrl = (targetUrl: string) => {
+  if (!needsProxy()) return targetUrl
+  return `/api/proxy?url=${encodeURIComponent(targetUrl)}`
 }
 
 const EM_JSONP_MIN_INTERVAL_MS = 300
@@ -190,14 +206,14 @@ export async function fetchStockList(
 ): Promise<StockInfo[]> {
   const fs =
     pool === 'all'
-      ? 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23' // 深主板+创业板+沪主板+科创板
+      ? 'm:0+t:6,m:0+t:80,m:1+t:23' // 深主板+创业板+沪主板（去掉科创板，减少数据量）
       : pool === 'hs300'
         ? 'b:BK0500'
         : 'b:BK0701'
   const fields = 'f2,f3,f6,f8,f9,f12,f13,f14,f20,f21,f23,f100,f128'
   const all: StockInfo[] = []
-  const seen = new Set<string>() // 按代码去重，防止代理兜底缓存重复页导致候选池重复
-  const pz = 100 // 东财 clist 单页上限 100
+  const seen = new Set<string>()
+  const pz = 100
   let page = 1
   for (;;) {
     const params = new URLSearchParams({
@@ -212,16 +228,25 @@ export async function fetchStockList(
       fields,
     })
     params.set('ut', 'bd1d9ddb04089700cf9c27f6f7426281')
+
     let data: ClistResponse
+
     if (isDev()) {
-      // 本地开发优先走代理（代理内置 push2delay 镜像兜底），
-      // 避免直连被封锁/限流的 push2 时每次 JSONP 都空等超时拖慢整条流水线
+      // 本地开发优先走代理
       data = await fetchJson<ClistResponse>(`/api/clist?${params.toString()}`, {
         Referer: 'https://quote.eastmoney.com/',
       })
+    } else if (needsProxy()) {
+      // 生产环境使用Vercel代理
+      const targetUrl = `${EM_CLIST}?${params.toString()}`
+      data = await fetchJson<ClistResponse>(proxyUrl(targetUrl), {
+        Referer: 'https://quote.eastmoney.com/',
+      })
     } else {
+      // 直连JSONP
       data = await fetchEastmoneyJsonp<ClistResponse>(EM_CLIST, params)
     }
+
     const list = data.data?.diff ?? []
     for (const s of parseClistDiff(list)) {
       if (seen.has(s.code)) continue
@@ -471,13 +496,21 @@ export async function fetchMoneyFlow(
     fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
   })
   let data: FflowResponse
+
   if (isDev()) {
     data = await fetchJson<FflowResponse>(`/api/fflow?${query.toString()}`, {
+      Referer: 'https://quote.eastmoney.com/',
+    })
+  } else if (needsProxy()) {
+    // 生产环境使用代理
+    const targetUrl = `${EM_FFLOW}?${query.toString()}`
+    data = await fetchJson<FflowResponse>(proxyUrl(targetUrl), {
       Referer: 'https://quote.eastmoney.com/',
     })
   } else {
     data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW, query)
   }
+
   const line = data.data?.klines?.[0]
   if (!line) return null
   const p = line.split(',')

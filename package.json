@@ -8,6 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "mobile": "node scripts/dev-with-proxy.mjs",
+    "mobile:dev": "bash scripts/mobile-dev.sh",
+    "deploy": "npm run build && node scripts/deploy-gh-pages.mjs",
     "proxy": "node proxy/index.mjs",
     "ai-server": "python -X utf8 -m uvicorn main:app --host 0.0.0.0 --port 8000 --app-dir ai-server",
     "verify": "tsx scripts/verify-scoring.ts",
