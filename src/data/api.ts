@@ -422,9 +422,18 @@ interface MinuteResponse {
 /** 获取个股分时数据（腾讯分钟接口） */
 export async function fetchMinuteData(code: string): Promise<MinutePoint[]> {
   const prefix = marketPrefixOf(code)
-  const url = isDev()
-    ? `/api/minute?code=${encodeURIComponent(prefix)}`
-    : `${TEN_MINUTE}?code=${encodeURIComponent(prefix)}`
+  let url: string
+
+  if (isDev()) {
+    url = `/api/minute?code=${encodeURIComponent(prefix)}`
+  } else if (needsProxy()) {
+    // 生产环境使用代理
+    const targetUrl = `${TEN_MINUTE}?code=${encodeURIComponent(prefix)}`
+    url = proxyUrl(targetUrl)
+  } else {
+    url = `${TEN_MINUTE}?code=${encodeURIComponent(prefix)}`
+  }
+
   const data = await fetchJson<MinuteResponse>(url, { Referer: 'https://gu.qq.com/' })
   const rows = data?.data?.[prefix]?.data?.data ?? []
   const points: MinutePoint[] = []
@@ -460,9 +469,18 @@ export async function fetchKline(
   lmt = 160,
 ): Promise<Kline[]> {
   const key = `${market === 'sh' ? 'sh' : 'sz'}${code}`
-  const url = isDev()
-    ? `/api/kline?market=${market}&code=${code}&lmt=${lmt}`
-    : `${TEN_KLINE}?param=${encodeURIComponent(`${key},day,,,${lmt},qfq`)}`
+  let url: string
+
+  if (isDev()) {
+    url = `/api/kline?market=${market}&code=${code}&lmt=${lmt}`
+  } else if (needsProxy()) {
+    // 生产环境使用代理
+    const targetUrl = `${TEN_KLINE}?param=${encodeURIComponent(`${key},day,,,${lmt},qfq`)}`
+    url = proxyUrl(targetUrl)
+  } else {
+    url = `${TEN_KLINE}?param=${encodeURIComponent(`${key},day,,,${lmt},qfq`)}`
+  }
+
   const data = await fetchJson<TencentKlineResponse>(url, { Referer: 'https://gu.qq.com/' })
   const node = data.data?.[key]
   const rows = node?.qfqday ?? node?.day ?? []
@@ -545,6 +563,12 @@ export async function fetchMoneyFlowHistory(
       data = await fetchJson<FflowResponse>(`/api/fflow-history?${query.toString()}`, {
         Referer: 'https://quote.eastmoney.com/',
       })
+    } else if (needsProxy()) {
+      // 生产环境使用代理
+      const targetUrl = `${EM_FFLOW_HIS}?${query.toString()}`
+      data = await fetchJson<FflowResponse>(proxyUrl(targetUrl), {
+        Referer: 'https://quote.eastmoney.com/',
+      })
     } else {
       data = await fetchEastmoneyJsonp<FflowResponse>(EM_FFLOW_HIS, query)
     }
@@ -572,9 +596,18 @@ export async function fetchMoneyFlowHistoryWithDates(
 ): Promise<Array<{ date: string; net: number }>> {
   try {
     const prefix = market === 'sh' ? 'sh' : market === 'bj' ? 'bj' : 'sz'
-    const url = isDev()
-      ? `/api/sina-moneyflow?market=${market}&code=${code}&num=${lmt}`
-      : `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+    let url: string
+
+    if (isDev()) {
+      url = `/api/sina-moneyflow?market=${market}&code=${code}&num=${lmt}`
+    } else if (needsProxy()) {
+      // 生产环境使用代理
+      const targetUrl = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+      url = proxyUrl(targetUrl)
+    } else {
+      url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+    }
+
     const res = await fetchJson<Array<{ opendate: string; netamount: string }>>(url, {
       Referer: 'https://finance.sina.com.cn/',
     })
@@ -596,10 +629,18 @@ async function fetchMoneyFlowHistorySina(
 ): Promise<number[]> {
   try {
     const prefix = market === 'sh' ? 'sh' : market === 'bj' ? 'bj' : 'sz'
-    const url =
-      isDev()
-        ? `/api/sina-moneyflow?market=${market}&code=${code}&num=${lmt}`
-        : `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+    let url: string
+
+    if (isDev()) {
+      url = `/api/sina-moneyflow?market=${market}&code=${code}&num=${lmt}`
+    } else if (needsProxy()) {
+      // 生产环境使用代理
+      const targetUrl = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+      url = proxyUrl(targetUrl)
+    } else {
+      url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=${lmt}&sort=opendate&asc=0&daima=${prefix}${code}`
+    }
+
     const res = await fetchJson<Array<{ opendate: string; netamount: string }>>(url, {
       Referer: 'https://finance.sina.com.cn/',
     })
