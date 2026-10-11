@@ -9,7 +9,7 @@ const allowedOrigins = [
   'http://127.0.0.1:5173'
 ];
 
-exports.handler = async (event, context) => {
+export const handler = async (event, context) => {
   // CORS处理
   const origin = event.headers.origin || '';
   const isAllowed = allowedOrigins.some(allowed =>
