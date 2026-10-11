@@ -61,9 +61,10 @@ const proxyUrl = (targetUrl: string) => {
   return `/api/proxy?url=${encodeURIComponent(targetUrl)}`
 }
 
-const EM_JSONP_MIN_INTERVAL_MS = 300
-let eastmoneyJsonpQueue: Promise<void> = Promise.resolve()
+const EM_JSONP_MIN_INTERVAL_MS = 150  // 优化：从300ms减到150ms，平衡速度与安全
+const EM_JSONP_CONCURRENCY = 5  // 并发数：同时发5个请求
 let nextEastmoneyJsonpAt = 0
+let activeJsonpRequests = 0
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -100,18 +101,32 @@ function fetchJsonp<T>(url: string, callbackName: string, timeoutMs = 12000): Pr
 }
 
 function queueEastmoneyJsonp<T>(request: () => Promise<T>): Promise<T> {
-  const run = async () => {
-    const wait = Math.max(0, nextEastmoneyJsonpAt - Date.now())
-    if (wait > 0) await delay(wait)
-    nextEastmoneyJsonpAt = Date.now() + EM_JSONP_MIN_INTERVAL_MS
-    return request()
-  }
-  const result = eastmoneyJsonpQueue.then(run, run)
-  eastmoneyJsonpQueue = result.then(
-    () => undefined,
-    () => undefined,
-  )
-  return result
+  return new Promise((resolve, reject) => {
+    const tryRun = async () => {
+      // 等待并发槽位
+      while (activeJsonpRequests >= EM_JSONP_CONCURRENCY) {
+        await delay(50)
+      }
+
+      // 等待限流间隔
+      const wait = Math.max(0, nextEastmoneyJsonpAt - Date.now())
+      if (wait > 0) await delay(wait)
+
+      activeJsonpRequests++
+      nextEastmoneyJsonpAt = Date.now() + EM_JSONP_MIN_INTERVAL_MS
+
+      try {
+        const result = await request()
+        resolve(result)
+      } catch (error) {
+        reject(error)
+      } finally {
+        activeJsonpRequests--
+      }
+    }
+
+    tryRun()
+  })
 }
 
 async function fetchEastmoneyJsonp<T>(

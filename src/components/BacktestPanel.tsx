@@ -38,7 +38,8 @@ export default function BacktestPanel({ config }: Props) {
   const [startupRequireUp, setStartupRequireUp] = useState(true) // 只在上升市交易
   const [startupHoldDays, setStartupHoldDays] = useState(6) // 持股天数
   const [startupTopN, setStartupTopN] = useState(5) // 每期持仓数
-  const [startupMinScore, setStartupMinScore] = useState(65) // 入选分
+  // 65 分可能只有“放量+缩量+趋势”，未必已经确认突破；默认只交易完整度更高的形态。
+  const [startupMinScore, setStartupMinScore] = useState(85) // 入选分
   const [startupLookback, setStartupLookback] = useState(250) // 回测周期（交易日，250≈1年）
 
   // 优化策略对比回测

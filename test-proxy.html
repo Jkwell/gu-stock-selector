@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>测试Netlify代理</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+    .test { margin: 20px 0; padding: 15px; border-radius: 8px; }
+    .success { background: #d3f9d8; border: 2px solid #51cf66; }
+    .error { background: #ffe3e3; border: 2px solid #ff6b6b; }
+    .info { background: #e7f5ff; border: 2px solid #339af0; }
+    button { padding: 10px 20px; font-size: 16px; margin: 10px 5px; cursor: pointer; }
+    pre { background: #2d2d2d; color: #f8f8f2; padding: 10px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Netlify代理测试工具</h1>
+  <p>当前域名: <strong id="domain"></strong></p>
+
+  <div class="test info">
+    <h3>说明</h3>
+    <p>这个页面会测试Netlify Functions代理是否正常工作。</p>
+    <p>请上传这个文件到你的Netlify网站，然后访问它。</p>
+  </div>
+
+  <button onclick="test1()">测试1: 代理百度</button>
+  <button onclick="test2()">测试2: 代理东财接口</button>
+  <button onclick="test3()">测试3: 代理腾讯接口</button>
+  <button onclick="clearResults()">清除结果</button>
+
+  <div id="results"></div>
+
+  <script>
+    document.getElementById('domain').textContent = window.location.hostname;
+    const results = document.getElementById('results');
+
+    function addResult(title, success, message, detail = '') {
+      const div = document.createElement('div');
+      div.className = `test ${success ? 'success' : 'error'}`;
+      div.innerHTML = `
+        <h3>${success ? '✅' : '❌'} ${title}</h3>
+        <p>${message}</p>
+        ${detail ? `<pre>${detail}</pre>` : ''}
+      `;
+      results.appendChild(div);
+    }
+
+    function clearResults() {
+      results.innerHTML = '';
+    }
+
+    // 测试1: 代理百度
+    async function test1() {
+      try {
+        addResult('测试1: 代理百度', false, '测试中...', '');
+
+        const proxyUrl = '/.netlify/functions/proxy?url=' + encodeURIComponent('https://www.baidu.com');
+        console.log('测试URL:', proxyUrl);
+
+        const response = await fetch(proxyUrl);
+        const text = await response.text();
+
+        results.lastElementChild.remove();
+
+        if (response.ok && text.includes('百度')) {
+          addResult(
+            '测试1: 代理百度',
+            true,
+            `Status: ${response.status}, 返回长度: ${text.length}字节`,
+            text.slice(0, 300) + '...'
+          );
+        } else {
+          addResult(
+            '测试1: 代理百度',
+            false,
+            `Status: ${response.status}, 返回了数据但格式不对`,
+            text.slice(0, 500)
+          );
+        }
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试1: 代理百度',
+          false,
+          `错误: ${error.message}`,
+          `可能原因:\n1. 代理函数不存在\n2. 函数有错误\n3. 网络问题`
+        );
+      }
+    }
+
+    // 测试2: 代理东财接口
+    async function test2() {
+      try {
+        addResult('测试2: 代理东财', false, '测试中...', '');
+
+        const targetUrl = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281';
+        const proxyUrl = '/.netlify/functions/proxy?url=' + encodeURIComponent(targetUrl);
+
+        const response = await fetch(proxyUrl);
+        const data = await response.json();
+
+        results.lastElementChild.remove();
+
+        if (data && data.data && data.data.diff) {
+          addResult(
+            '测试2: 代理东财',
+            true,
+            `成功！获取到 ${data.data.total || 0} 只股票`,
+            JSON.stringify(data.data.diff.slice(0, 2), null, 2)
+          );
+        } else {
+          addResult(
+            '测试2: 代理东财',
+            false,
+            `返回了数据但格式不对`,
+            JSON.stringify(data, null, 2).slice(0, 500)
+          );
+        }
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试2: 代理东财',
+          false,
+          `错误: ${error.message}`,
+          `这是最关键的测试！如果失败，说明代理无法访问东财接口。`
+        );
+      }
+    }
+
+    // 测试3: 代理腾讯接口
+    async function test3() {
+      try {
+        addResult('测试3: 代理腾讯', false, '测试中...', '');
+
+        const targetUrl = 'https://qt.gtimg.cn/q=sh600519';
+        const proxyUrl = '/.netlify/functions/proxy?url=' + encodeURIComponent(targetUrl);
+
+        const response = await fetch(proxyUrl);
+        const text = await response.text();
+
+        results.lastElementChild.remove();
+
+        if (text.includes('v_')) {
+          addResult(
+            '测试3: 代理腾讯',
+            true,
+            `成功！获取到行情数据`,
+            text
+          );
+        } else {
+          addResult(
+            '测试3: 代理腾讯',
+            false,
+            `返回了数据但格式不对`,
+            text.slice(0, 500)
+          );
+        }
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试3: 代理腾讯',
+          false,
+          `错误: ${error.message}`,
+          ''
+        );
+      }
+    }
+
+    // 页面加载后自动测试
+    window.onload = () => {
+      console.log('5秒后自动开始测试...');
+      setTimeout(async () => {
+        await test1();
+        await new Promise(r => setTimeout(r, 1000));
+        await test2();
+        await new Promise(r => setTimeout(r, 1000));
+        await test3();
+      }, 5000);
+    };
+  </script>
+</body>
+</html>

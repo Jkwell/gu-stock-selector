@@ -30,6 +30,8 @@ export interface StartupBacktestConfig {
   useRawScore?: boolean // true=使用原始因子分数（不经过归一化和权重计算），适用于 shrink_surge
   /** 资金流历史：code → (日期 → 当日主力净流入)，用于"资金趋势"排序加成（和首页一致） */
   moneyFlowByCode?: Map<string, Map<string, number>>
+  /** 买卖双边综合成本率，默认 0.15%。 */
+  costRate?: number
 }
 
 export interface StartupTrade {
@@ -119,6 +121,7 @@ export function runStartupBacktest(
   const marketFilterPct = config.marketFilterPct ?? 0
   const factorKey = config.factorKey ?? 'startup'
   const moneyFlowByCode = config.moneyFlowByCode
+  const costRate = Math.max(0, config.costRate ?? 0.0015)
 
   // 资金趋势加成：近5日主力净流入天数越多，加成越高（调整为0-1范围以匹配shrink_surge因子）
   const moneyBonus = (code: string, kline: Kline[], dayIdx: number): number => {
@@ -154,7 +157,7 @@ export function runStartupBacktest(
     maxReturn: 0, minReturn: 0, maxDrawdown: 0, tradeCount: 0, trades: [],
   }
   // 只保留 K 线足够长的股票（评分需要至少 70 根 + 持有期）
-  const need = 70 + holdDays
+  const need = 70 + holdDays + 1
   const pool = candidates.filter((c) => c.kline.length >= need)
   if (pool.length === 0) return empty
 
@@ -190,7 +193,8 @@ export function runStartupBacktest(
 
     if (scored.length === 0) continue
 
-    const entryDate = pool[0].kline[day]?.date ?? ''
+    const entryIdx = day + 1
+    const entryDate = pool[0].kline[entryIdx]?.date ?? ''
 
     let periodReturn = 0
     let valid = 0
@@ -198,7 +202,7 @@ export function runStartupBacktest(
       const entryPrice = priceAtDay(s.kline, day)
       if (entryPrice === null || entryPrice <= 0) continue
 
-      const exitIdx = Math.min(day + holdDays, lastDay)
+      const exitIdx = Math.min(entryIdx + holdDays - 1, lastDay)
       let actualExitIdx = exitIdx
       let exitPrice = priceAtDay(s.kline, exitIdx)
       let exitReason: StartupTrade['exitReason'] = '到期'
@@ -245,7 +249,7 @@ export function runStartupBacktest(
     if (valid > 0) {
       // 正确的等权组合：本期平均收益
       const avgPeriod = periodReturn / valid
-      equity *= 1 + avgPeriod / 100
+      equity *= Math.max(0, 1 + avgPeriod / 100 - costRate)
       equityCurve.push(equity)
     }
   }
@@ -278,3 +282,4 @@ export function runStartupBacktest(
     trades: trades.slice(-30),
   }
 }
+

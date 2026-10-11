@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>线上数据接口诊断工具</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .header {
+      background: #1971c2;
+      color: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .test-section {
+      background: white;
+      padding: 20px;
+      margin-bottom: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .test-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #333;
+    }
+    .btn {
+      background: #1971c2;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    .btn:hover {
+      background: #1864ab;
+    }
+    .result {
+      margin-top: 15px;
+      padding: 15px;
+      border-radius: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .result.success {
+      background: #d3f9d8;
+      color: #2b8a3e;
+      border: 1px solid #51cf66;
+    }
+    .result.error {
+      background: #ffe3e3;
+      color: #c92a2a;
+      border: 1px solid #ff6b6b;
+    }
+    .result.info {
+      background: #e7f5ff;
+      color: #1864ab;
+      border: 1px solid #74c0fc;
+    }
+    .loading {
+      color: #868e96;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 线上数据接口诊断工具</h1>
+    <p>诊断 GitHub Pages 部署后的数据获取问题</p>
+  </div>
+
+  <!-- 测试1：东财股票列表 -->
+  <div class="test-section">
+    <div class="test-title">测试1：东财股票列表接口（JSONP）</div>
+    <button class="btn" onclick="testEastmoneyList()">🧪 测试东财接口</button>
+    <div id="test1-result"></div>
+  </div>
+
+  <!-- 测试2：腾讯实时行情 -->
+  <div class="test-section">
+    <div class="test-title">测试2：腾讯实时行情接口</div>
+    <button class="btn" onclick="testTencentQuote()">🧪 测试腾讯接口</button>
+    <div id="test2-result"></div>
+  </div>
+
+  <!-- 测试3：新浪接口 -->
+  <div class="test-section">
+    <div class="test-title">测试3：新浪股票列表接口（HTTPS）</div>
+    <button class="btn" onclick="testSinaList()">🧪 测试新浪接口</button>
+    <div id="test3-result"></div>
+  </div>
+
+  <!-- 测试4：东财资金流 -->
+  <div class="test-section">
+    <div class="test-title">测试4：东财资金流接口（JSONP）</div>
+    <button class="btn" onclick="testMoneyFlow()">🧪 测试资金流接口</button>
+    <div id="test4-result"></div>
+  </div>
+
+  <!-- 测试5：环境检测 -->
+  <div class="test-section">
+    <div class="test-title">测试5：环境检测</div>
+    <button class="btn" onclick="testEnvironment()">🔍 检测环境</button>
+    <div id="test5-result"></div>
+  </div>
+
+  <!-- 测试6：综合测试 -->
+  <div class="test-section">
+    <div class="test-title">测试6：完整选股流程模拟</div>
+    <button class="btn" onclick="testFullPipeline()">🚀 运行完整流程</button>
+    <div id="test6-result"></div>
+  </div>
+
+  <script>
+    // 工具函数：显示结果
+    function showResult(elementId, message, type = 'info') {
+      const el = document.getElementById(elementId);
+      el.innerHTML = `<div class="result ${type}">${message}</div>`;
+    }
+
+    function showLoading(elementId) {
+      const el = document.getElementById(elementId);
+      el.innerHTML = `<div class="loading">⏳ 测试中...</div>`;
+    }
+
+    // JSONP请求函数
+    function fetchJsonp(url, callbackName, timeout = 10000) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        let settled = false;
+
+        const cleanup = () => {
+          clearTimeout(timer);
+          delete window[callbackName];
+          script.remove();
+        };
+
+        const settle = (callback) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          callback();
+        };
+
+        const timer = setTimeout(() => {
+          settle(() => reject(new Error('JSONP请求超时 (10秒)')));
+        }, timeout);
+
+        window[callbackName] = (data) => {
+          settle(() => resolve(data));
+        };
+
+        script.onerror = () => {
+          settle(() => reject(new Error('JSONP脚本加载失败')));
+        };
+
+        script.src = url;
+        document.head.appendChild(script);
+      });
+    }
+
+    // 测试1：东财股票列表
+    async function testEastmoneyList() {
+      showLoading('test1-result');
+      try {
+        const cb = `emcb_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f12',
+          fs: 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
+          fields: 'f2,f3,f12,f13,f14',
+          ut: 'bd1d9ddb04089700cf9c27f6f7426281',
+          cb: cb,
+          _: Date.now()
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params.toString()}`;
+        console.log('测试URL:', url);
+
+        const data = await fetchJsonp(url, cb);
+
+        if (data && data.data && data.data.diff) {
+          const stocks = data.data.diff.slice(0, 3);
+          const total = data.data.total || 0;
+          showResult('test1-result',
+            `✅ 成功！\n` +
+            `总数：${total} 只股票\n` +
+            `前3只：\n` +
+            stocks.map(s => `  ${s.f12} ${s.f14} ${s.f2}`).join('\n'),
+            'success'
+          );
+        } else {
+          showResult('test1-result',
+            `⚠️ 接口返回了数据，但格式不对：\n${JSON.stringify(data, null, 2)}`,
+            'error'
+          );
+        }
+      } catch (error) {
+        showResult('test1-result',
+          `❌ 失败！\n错误：${error.message}\n\n` +
+          `可能原因：\n` +
+          `1. 东财接口限流或封禁GitHub Pages域名\n` +
+          `2. 接口URL变化\n` +
+          `3. 网络问题`,
+          'error'
+        );
+        console.error('东财接口错误:', error);
+      }
+    }
+
+    // 测试2：腾讯实时行情
+    async function testTencentQuote() {
+      showLoading('test2-result');
+      try {
+        const url = 'https://qt.gtimg.cn/q=sh600519,sz000001';
+        const response = await fetch(url, {
+          headers: {
+            'Referer': 'https://gu.qq.com/'
+          }
+        });
+        const text = await response.text();
+
+        if (text && text.includes('v_')) {
+          const lines = text.split('\n').filter(l => l.trim());
+          showResult('test2-result',
+            `✅ 成功！\n` +
+            `返回数据：\n${lines.join('\n')}`,
+            'success'
+          );
+        } else {
+          showResult('test2-result',
+            `⚠️ 返回了数据但格式不对：\n${text}`,
+            'error'
+          );
+        }
+      } catch (error) {
+        showResult('test2-result',
+          `❌ 失败！\n错误：${error.message}\n\n` +
+          `可能原因：\n` +
+          `1. CORS跨域问题\n` +
+          `2. 接口不可用`,
+          'error'
+        );
+        console.error('腾讯接口错误:', error);
+      }
+    }
+
+    // 测试3：新浪接口
+    async function testSinaList() {
+      showLoading('test3-result');
+      try {
+        const url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=1&num=10&sort=symbol&asc=1&node=sh_a';
+        const response = await fetch(url, {
+          headers: {
+            'Referer': 'https://finance.sina.com.cn/'
+          }
+        });
+        const data = await response.json();
+
+        if (Array.isArray(data) && data.length > 0) {
+          showResult('test3-result',
+            `✅ 成功！\n` +
+            `获取到 ${data.length} 只股票\n` +
+            `前3只：\n` +
+            data.slice(0, 3).map(s => `  ${s.code} ${s.name} ${s.trade}`).join('\n'),
+            'success'
+          );
+        } else {
+          showResult('test3-result',
+            `⚠️ 返回了数据但格式不对：\n${JSON.stringify(data, null, 2)}`,
+            'error'
+          );
+        }
+      } catch (error) {
+        showResult('test3-result',
+          `❌ 失败！\n错误：${error.message}\n\n` +
+          `可能原因：\n` +
+          `1. HTTPS接口不支持或已关闭\n` +
+          `2. CORS跨域问题\n` +
+          `3. 接口已变更`,
+          'error'
+        );
+        console.error('新浪接口错误:', error);
+      }
+    }
+
+    // 测试4：东财资金流
+    async function testMoneyFlow() {
+      showLoading('test4-result');
+      try {
+        const cb = `emcb_${Date.now()}`;
+        const params = new URLSearchParams({
+          secid: '1.600519',
+          lmt: '1',
+          klt: '101',
+          fields1: 'f1,f2,f3,f7',
+          fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
+          cb: cb,
+          _: Date.now()
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?${params.toString()}`;
+        const data = await fetchJsonp(url, cb);
+
+        if (data && data.data && data.data.klines) {
+          showResult('test4-result',
+            `✅ 成功！\n` +
+            `资金流数据：${data.data.klines[0]}`,
+            'success'
+          );
+        } else {
+          showResult('test4-result',
+            `⚠️ 返回了数据但格式不对：\n${JSON.stringify(data, null, 2)}`,
+            'error'
+          );
+        }
+      } catch (error) {
+        showResult('test4-result',
+          `❌ 失败！\n错误：${error.message}`,
+          'error'
+        );
+        console.error('资金流接口错误:', error);
+      }
+    }
+
+    // 测试5：环境检测
+    function testEnvironment() {
+      const info = {
+        协议: window.location.protocol,
+        域名: window.location.hostname,
+        路径: window.location.pathname,
+        完整URL: window.location.href,
+        UserAgent: navigator.userAgent,
+        支持JSONP: typeof document !== 'undefined',
+        支持Fetch: typeof fetch !== 'undefined',
+        本地开发: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      };
+
+      showResult('test5-result',
+        `✅ 环境信息：\n` +
+        Object.entries(info).map(([k, v]) => `${k}: ${v}`).join('\n'),
+        'info'
+      );
+    }
+
+    // 测试6：完整流程
+    async function testFullPipeline() {
+      showLoading('test6-result');
+      const results = [];
+
+      try {
+        // 1. 获取股票列表
+        results.push('【步骤1】获取股票列表...');
+        const cb1 = `emcb_${Date.now()}`;
+        const params1 = new URLSearchParams({
+          pn: '1', pz: '20', po: '1', np: '1', fltt: '2', invt: '2',
+          fid: 'f12', fs: 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
+          fields: 'f2,f3,f12,f13,f14,f20',
+          ut: 'bd1d9ddb04089700cf9c27f6f7426281',
+          cb: cb1, _: Date.now()
+        });
+        const listData = await fetchJsonp(
+          `https://push2.eastmoney.com/api/qt/clist/get?${params1.toString()}`,
+          cb1
+        );
+
+        if (!listData || !listData.data || !listData.data.diff || listData.data.diff.length === 0) {
+          throw new Error('获取股票列表失败或返回空数据');
+        }
+        results.push(`✅ 成功获取 ${listData.data.diff.length} 只股票`);
+
+        // 2. 获取第一只股票的K线
+        const firstStock = listData.data.diff[0];
+        const code = firstStock.f12;
+        const market = firstStock.f13 === 1 ? 'sh' : 'sz';
+        results.push(`\n【步骤2】获取 ${market}${code} 的K线数据...`);
+
+        const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${market}${code},day,,,20,qfq`;
+        const klineRes = await fetch(klineUrl, {
+          headers: { 'Referer': 'https://gu.qq.com/' }
+        });
+        const klineData = await klineRes.json();
+
+        if (!klineData || !klineData.data || !klineData.data[`${market}${code}`]) {
+          throw new Error('获取K线数据失败');
+        }
+        const klines = klineData.data[`${market}${code}`].qfqday || [];
+        results.push(`✅ 成功获取 ${klines.length} 根K线`);
+
+        // 3. 获取资金流
+        results.push(`\n【步骤3】获取资金流数据...`);
+        const cb3 = `emcb_${Date.now()}`;
+        const secid = firstStock.f13 === 1 ? `1.${code}` : `0.${code}`;
+        const params3 = new URLSearchParams({
+          secid, lmt: '1', klt: '101',
+          fields1: 'f1,f2,f3,f7',
+          fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65',
+          cb: cb3, _: Date.now()
+        });
+        const mfData = await fetchJsonp(
+          `https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?${params3.toString()}`,
+          cb3
+        );
+
+        if (!mfData || !mfData.data || !mfData.data.klines) {
+          results.push(`⚠️ 资金流数据获取失败（可能不是所有股票都有）`);
+        } else {
+          results.push(`✅ 成功获取资金流数据`);
+        }
+
+        results.push(`\n🎉 完整流程测试成功！\n`);
+        results.push(`测试股票：${firstStock.f14} (${code})`);
+        results.push(`股票数量：${listData.data.diff.length} 只`);
+        results.push(`K线数量：${klines.length} 根`);
+
+        showResult('test6-result', results.join('\n'), 'success');
+
+      } catch (error) {
+        results.push(`\n❌ 流程失败！`);
+        results.push(`错误：${error.message}`);
+        showResult('test6-result', results.join('\n'), 'error');
+        console.error('完整流程错误:', error);
+      }
+    }
+  </script>
+</body>
+</html>

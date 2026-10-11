@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>测试东财JSONP直连（模拟GitHub Pages环境）</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+    .result { margin: 20px 0; padding: 15px; border-radius: 8px; }
+    .success { background: #d3f9d8; border: 2px solid #51cf66; }
+    .error { background: #ffe3e3; border: 2px solid #ff6b6b; }
+    h2 { margin-top: 30px; }
+    pre { background: #fff; padding: 10px; overflow-x: auto; }
+    .tip { background: #fff3bf; padding: 10px; border-left: 4px solid #ffd43b; margin: 15px 0; }
+  </style>
+</head>
+<body>
+  <h1>🧪 测试东财JSONP直连</h1>
+  <p>模拟GitHub Pages环境（HTTPS页面），测试东财接口是否可用</p>
+
+  <div class="tip">
+    <strong>💡 关键信息：</strong><br>
+    - 当前协议: <code id="protocol"></code><br>
+    - 当前域名: <code id="hostname"></code><br>
+    - 测试目标: push2.eastmoney.com（东财接口）
+  </div>
+
+  <button onclick="testEastmoney()" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">
+    🚀 开始测试
+  </button>
+
+  <div id="results"></div>
+
+  <script>
+    document.getElementById('protocol').textContent = window.location.protocol;
+    document.getElementById('hostname').textContent = window.location.hostname;
+
+    const results = document.getElementById('results');
+
+    function addResult(title, isSuccess, message, detail = '') {
+      const div = document.createElement('div');
+      div.className = `result ${isSuccess ? 'success' : 'error'}`;
+      div.innerHTML = `
+        <h3>${isSuccess ? '✅' : '❌'} ${title}</h3>
+        <p>${message}</p>
+        ${detail ? `<pre>${detail}</pre>` : ''}
+      `;
+      results.appendChild(div);
+    }
+
+    async function testEastmoney() {
+      results.innerHTML = '';
+
+      // 测试1: 最简单的JSONP
+      addResult('测试1: 最简JSONP（10只股票）', false, '测试中...', '');
+
+      try {
+        const cb = `test1_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6',
+          fields: 'f12,f14',
+          cb: cb,
+          _: Date.now()
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+        console.log('测试1 URL:', url);
+
+        const data = await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timeout = setTimeout(() => {
+            script.remove();
+            delete window[cb];
+            reject(new Error('超时（10秒）'));
+          }, 10000);
+
+          window[cb] = (data) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            resolve(data);
+          };
+
+          script.onerror = (e) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            console.error('Script error:', e);
+            reject(new Error('脚本加载失败 - 可能被服务器拒绝'));
+          };
+
+          script.src = url;
+          document.head.appendChild(script);
+        });
+
+        results.lastElementChild.remove();
+        addResult(
+          '测试1: 最简JSONP',
+          true,
+          `成功！获取到 ${data.data?.total || 0} 只股票`,
+          JSON.stringify(data.data?.diff?.slice(0, 2), null, 2)
+        );
+
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试1: 最简JSONP',
+          false,
+          `失败: ${error.message}`,
+          `这意味着东财服务器拒绝了JSONP请求。\n\n可能原因:\n1. 东财检测到来自非授权域名的请求\n2. 东财限流或封禁\n3. 需要特定的Referer或其他Headers（JSONP无法设置）`
+        );
+      }
+
+      // 稍等一下再测试第二个
+      await new Promise(r => setTimeout(r, 1000));
+
+      // 测试2: 不带ut参数
+      addResult('测试2: 不带ut参数', false, '测试中...', '');
+
+      try {
+        const cb = `test2_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6',
+          fields: 'f12,f14',
+          cb: cb,
+          _: Date.now()
+          // 不带 ut
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+
+        const data = await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timeout = setTimeout(() => {
+            script.remove();
+            delete window[cb];
+            reject(new Error('超时'));
+          }, 10000);
+
+          window[cb] = (data) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            resolve(data);
+          };
+
+          script.onerror = () => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            reject(new Error('脚本加载失败'));
+          };
+
+          script.src = url;
+          document.head.appendChild(script);
+        });
+
+        results.lastElementChild.remove();
+        addResult(
+          '测试2: 不带ut参数',
+          true,
+          `成功！获取到 ${data.data?.total || 0} 只股票`,
+          'ut参数不是必需的'
+        );
+
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试2: 不带ut参数',
+          false,
+          `失败: ${error.message}`,
+          ''
+        );
+      }
+
+      // 测试3: 腾讯接口（对比测试）
+      await new Promise(r => setTimeout(r, 1000));
+      addResult('测试3: 腾讯接口（对比）', false, '测试中...', '');
+
+      try {
+        const response = await fetch('https://qt.gtimg.cn/q=sh600519');
+        const text = await response.text();
+
+        results.lastElementChild.remove();
+        if (text.includes('v_')) {
+          addResult(
+            '测试3: 腾讯接口',
+            true,
+            '成功！腾讯接口可用',
+            text.slice(0, 200) + '...'
+          );
+        } else {
+          addResult(
+            '测试3: 腾讯接口',
+            false,
+            '返回了数据但格式不对',
+            text
+          );
+        }
+      } catch (error) {
+        results.lastElementChild.remove();
+        addResult(
+          '测试3: 腾讯接口',
+          false,
+          `失败: ${error.message}`,
+          '腾讯接口也不可用，可能是网络问题'
+        );
+      }
+
+      // 总结
+      await new Promise(r => setTimeout(r, 500));
+      const div = document.createElement('div');
+      div.className = 'tip';
+      div.innerHTML = `
+        <h3>📊 测试总结</h3>
+        <p><strong>如果测试1和测试2都失败：</strong></p>
+        <ul>
+          <li>东财接口阻止了来自这个域名的JSONP请求</li>
+          <li>GitHub Pages无法使用JSONP直连东财接口</li>
+          <li><strong>解决方案：部署到Vercel并使用Serverless Functions代理</strong></li>
+        </ul>
+        <p><strong>如果测试1或测试2成功：</strong></p>
+        <ul>
+          <li>JSONP直连可用！</li>
+          <li>问题可能在前端代码的其他地方</li>
+          <li>需要检查实际项目代码</li>
+        </ul>
+      `;
+      results.appendChild(div);
+    }
+
+    // 自动运行测试
+    setTimeout(() => {
+      console.log('5秒后自动开始测试...');
+      setTimeout(testEastmoney, 5000);
+    }, 100);
+  </script>
+</body>
+</html>

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>东财接口测试</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .test { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+    .success { background: #d3f9d8; }
+    .error { background: #ffe3e3; }
+  </style>
+</head>
+<body>
+  <h1>东财接口多种方式测试</h1>
+
+  <div id="results"></div>
+
+  <script>
+    const results = document.getElementById('results');
+
+    function addResult(title, status, message, data) {
+      const div = document.createElement('div');
+      div.className = `test ${status}`;
+      div.innerHTML = `
+        <h3>${title}</h3>
+        <p><strong>状态：</strong>${status === 'success' ? '✅ 成功' : '❌ 失败'}</p>
+        <p><strong>信息：</strong>${message}</p>
+        ${data ? `<pre>${JSON.stringify(data, null, 2).slice(0, 500)}...</pre>` : ''}
+      `;
+      results.appendChild(div);
+    }
+
+    // 测试1：标准JSONP（带ut参数）
+    async function test1() {
+      try {
+        const cb = `cb_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '20',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
+          fields: 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152',
+          ut: 'bd1d9ddb04089700cf9c27f6f7426281',
+          cb: cb,
+          _: Date.now()
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timeout = setTimeout(() => {
+            script.remove();
+            delete window[cb];
+            reject(new Error('超时'));
+          }, 5000);
+
+          window[cb] = (data) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            resolve(data);
+          };
+
+          script.onerror = () => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            reject(new Error('脚本加载失败'));
+          };
+
+          script.src = url;
+          document.head.appendChild(script);
+        }).then(data => {
+          addResult('测试1: 标准JSONP（完整fields）', 'success',
+            `获取到 ${data?.data?.total || 0} 只股票`, data);
+        });
+      } catch (error) {
+        addResult('测试1: 标准JSONP（完整fields）', 'error', error.message);
+      }
+    }
+
+    // 测试2：简化JSONP（最少fields）
+    async function test2() {
+      try {
+        const cb = `cb_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6,m:1+t:2',
+          fields: 'f12,f14',
+          cb: cb,
+          _: Date.now()
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timeout = setTimeout(() => {
+            script.remove();
+            delete window[cb];
+            reject(new Error('超时'));
+          }, 5000);
+
+          window[cb] = (data) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            resolve(data);
+          };
+
+          script.onerror = () => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            reject(new Error('脚本加载失败'));
+          };
+
+          script.src = url;
+          document.head.appendChild(script);
+        }).then(data => {
+          addResult('测试2: 简化JSONP（最少fields）', 'success',
+            `获取到 ${data?.data?.total || 0} 只股票`, data);
+        });
+      } catch (error) {
+        addResult('测试2: 简化JSONP（最少fields）', 'error', error.message);
+      }
+    }
+
+    // 测试3：fetch CORS（会失败但能看错误信息）
+    async function test3() {
+      try {
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6',
+          fields: 'f12,f14',
+          ut: 'bd1d9ddb04089700cf9c27f6f7426281'
+        });
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        addResult('测试3: Fetch CORS', 'success',
+          `意外成功！获取到 ${data?.data?.total || 0} 只股票`, data);
+      } catch (error) {
+        addResult('测试3: Fetch CORS', 'error',
+          `预期的CORS错误：${error.message}`);
+      }
+    }
+
+    // 测试4：腾讯接口
+    async function test4() {
+      try {
+        const url = 'https://qt.gtimg.cn/q=sh600519';
+        const response = await fetch(url);
+        const text = await response.text();
+
+        if (text.includes('v_')) {
+          addResult('测试4: 腾讯接口', 'success', '成功获取行情数据', text);
+        } else {
+          throw new Error('返回格式不对');
+        }
+      } catch (error) {
+        addResult('测试4: 腾讯接口', 'error', error.message);
+      }
+    }
+
+    // 测试5：检查网络
+    async function test5() {
+      try {
+        const url = 'https://www.baidu.com';
+        const response = await fetch(url, { mode: 'no-cors' });
+        addResult('测试5: 网络连接', 'success', '网络正常');
+      } catch (error) {
+        addResult('测试5: 网络连接', 'error', '网络异常：' + error.message);
+      }
+    }
+
+    // 测试6：不带ut参数
+    async function test6() {
+      try {
+        const cb = `cb_${Date.now()}`;
+        const params = new URLSearchParams({
+          pn: '1',
+          pz: '10',
+          po: '1',
+          np: '1',
+          fltt: '2',
+          invt: '2',
+          fid: 'f3',
+          fs: 'm:0+t:6',
+          fields: 'f12,f14',
+          cb: cb,
+          _: Date.now()
+        });
+        // ⚠️ 不带ut参数
+
+        const url = `https://push2.eastmoney.com/api/qt/clist/get?${params}`;
+
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timeout = setTimeout(() => {
+            script.remove();
+            delete window[cb];
+            reject(new Error('超时'));
+          }, 5000);
+
+          window[cb] = (data) => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            resolve(data);
+          };
+
+          script.onerror = () => {
+            clearTimeout(timeout);
+            script.remove();
+            delete window[cb];
+            reject(new Error('脚本加载失败'));
+          };
+
+          script.src = url;
+          document.head.appendChild(script);
+        }).then(data => {
+          addResult('测试6: 不带ut参数', 'success',
+            `获取到 ${data?.data?.total || 0} 只股票`, data);
+        });
+      } catch (error) {
+        addResult('测试6: 不带ut参数', 'error', error.message);
+      }
+    }
+
+    // 运行所有测试
+    async function runAllTests() {
+      addResult('环境信息', 'success',
+        `协议: ${location.protocol}\n域名: ${location.hostname}\nUA: ${navigator.userAgent}`);
+
+      await test5(); // 先测网络
+      await new Promise(r => setTimeout(r, 500));
+      await test4(); // 测腾讯
+      await new Promise(r => setTimeout(r, 500));
+      await test6(); // 不带ut
+      await new Promise(r => setTimeout(r, 500));
+      await test2(); // 简化参数
+      await new Promise(r => setTimeout(r, 500));
+      await test1(); // 完整参数
+      await new Promise(r => setTimeout(r, 500));
+      await test3(); // CORS测试
+    }
+
+    runAllTests();
+  </script>
+</body>
+</html>
