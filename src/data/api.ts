@@ -51,6 +51,14 @@ const needsProxy = () => {
 /** 构造代理URL */
 const proxyUrl = (targetUrl: string) => {
   if (!needsProxy()) return targetUrl
+
+  // Netlify Functions的路径是 /.netlify/functions/proxy
+  // 不是 /api/proxy（redirects可能不生效）
+  if (typeof window !== 'undefined' && window.location.hostname.includes('netlify.app')) {
+    return `/.netlify/functions/proxy?url=${encodeURIComponent(targetUrl)}`
+  }
+
+  // Vercel或其他环境用 /api/proxy
   return `/api/proxy?url=${encodeURIComponent(targetUrl)}`
 }
 
